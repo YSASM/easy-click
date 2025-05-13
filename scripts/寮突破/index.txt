@@ -1,4 +1,6 @@
+# 开始页面在寮突破
 TAG START
+# 看还有没有次数
 FIND_IMAGE image3.png image3 END HAVE_TIMES
 TAG HAVE_TIMES
 
@@ -13,12 +15,31 @@ CLICK image1
 
 TAG WAIT
 WAIT 2
+# 如果还在刚才页面
+FIND_IMAGE image1.png image1 FLASH DONOTFLASH 
+
+TAG DONOTFLASH
+FIND_IMAGE image4.png image4 FAILD NOT_FAILD
+
+TAG NOT_FAILD
 FIND_IMAGE image2.png image2 NEXT WAIT
 
+TAG FLASH
+FIND_IMAGE image7.png image7
+CLICK image7
+FIND_IMAGE image7.png image5
+CLICK image5
+FIND_IMAGE image7.png image6
+CLICK image6
+GO_START
 
 TAG NEXT
 CLICK image2
 WAIT 3
+GO START
+
+TAG FAILD
+CLICK image4
 GO START
 
 TAG END
