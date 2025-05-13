@@ -1,4 +1,3 @@
 PySide6
 cython
-pillow
 opencv-python

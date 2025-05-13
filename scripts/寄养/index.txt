@@ -1,0 +1,17 @@
+
+FIND_IMAGE image0.png image0
+CLICK image0
+FIND_IMAGE image1.png image1
+CLICK image1
+FIND_IMAGE image2.png image2
+CLICK image2
+FIND_IMAGE image3.png image3
+CLICK image3
+FIND_IMAGE image4.png image4
+CLICK image4
+FIND_IMAGE image5.png image5
+CLICK image5
+FIND_IMAGE image6.png image6
+CLICK image6
+FIND_IMAGE image7.png image7
+CLICK image7

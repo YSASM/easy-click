@@ -24,7 +24,7 @@ from PySide6.QtGui import QPixmap, QPainter, QPen, qRgb
 from PIL import Image
 import cv2
 import numpy as np
-
+import uuid
 if not os.path.exists("scripts"):
     os.mkdir("scripts")
 
@@ -32,24 +32,30 @@ if not os.path.exists("scripts"):
 def run_cmd(command):
     try:
         output = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)
-        return output.decode("gbk").encode("utf-8").decode("utf-8")
+        return output.decode().encode("utf-8").decode("utf-8")
     except subprocess.CalledProcessError as e:
-        return e.output.decode("gbk").encode("utf-8").decode("utf-8")
+        return e.output.decode().encode("utf-8").decode("utf-8")
 
 
 tasks = []
 
 
 def random_time(t):
-    if t <= 1:
-        t = 2
+    if t <= 0:
+        t = 1
     if random.randint(0, 10) % 2:
         return t + random.randint(0, 1) / 10
     return t - random.randint(0, 9) / 10
 
+def random_xy(t):
+    int_num = random.randint(-2, 2)
+    float_num = random.randint(-9, 9) / 10
+    random_num = int_num + float_num
+    return t + random_num
 
 class ScriptRunner(QMainWindow):
     add_cmd_out_signal = Signal(str)
+    on_close = Signal()
 
     def __init__(self, dir, address, *args, **kwargs):
         self.dir = dir
@@ -70,6 +76,8 @@ class ScriptRunner(QMainWindow):
     def add_cmd_out(self, cmd):
         self.cmd_out_list.append(cmd)
         self.cmd_out.setText("\n".join(self.cmd_out_list))
+        bar = self.cmd_out.verticalScrollBar()
+        bar.setValue(bar.maximum())
 
     def make_cmd(self, cmd):
         return f"adb -s {self.address} {cmd}"
@@ -77,14 +85,13 @@ class ScriptRunner(QMainWindow):
     def cut_image(self):
         if not os.path.exists(self.dir + "/temp"):
             os.mkdir(self.dir + "/temp")
-        id = os.listdir(self.dir + "/temp").__len__()
+        id = uuid.uuid4()
         run_cmd(self.make_cmd("shell screencap -p /sdcard/screenshot.png"))
         run_cmd(
             self.make_cmd(f"pull /sdcard/screenshot.png {self.dir}/temp/image{id}.png")
         )
         image = Image.open(f"{self.dir}/temp/image{id}.png")
-        # os.remove(f"{self.dir}/temp/image{id}.png")
-        return image
+        return image,f"{self.dir}/temp/image{id}.png"
 
     def pillow_to_cv2(self, image: Image):
         return cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
@@ -93,19 +100,17 @@ class ScriptRunner(QMainWindow):
         return Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
 
     def find_image(self, name):
-        for _ in range(5):
-            if self.closed:
-                break
-            big_image = self.pillow_to_cv2(self.cut_image())
-            small_image = self.pillow_to_cv2(Image.open(f"{self.dir}/images/{name}"))
-            result = cv2.matchTemplate(big_image, small_image, cv2.TM_CCOEFF_NORMED)
-            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-            if max_val > 0.8:
-                x, y = max_loc
-                x += small_image.shape[1] // 2
-                y += small_image.shape[0] // 2
-                return [x, y]  # 返回最佳匹配左上角坐标
-            time.sleep(1)
+        big_image,temp_path = self.cut_image()
+        big_image = self.pillow_to_cv2(big_image)
+        small_image = self.pillow_to_cv2(Image.open(f"{self.dir}/images/{name}"))
+        result = cv2.matchTemplate(big_image, small_image, cv2.TM_CCOEFF_NORMED)
+        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+        os.remove(temp_path)
+        if max_val > 0.95:
+            x, y = max_loc
+            x += small_image.shape[1] // 2
+            y += small_image.shape[0] // 2
+            return [x, y]  # 返回最佳匹配左上角坐标
         return None
 
     def back(self):
@@ -121,6 +126,7 @@ class ScriptRunner(QMainWindow):
 
     def closeEvent(self, event):
         self.closed = True
+        self.on_close.emit()
         return super().closeEvent(event)
 
     def get_tag(self, tag):
@@ -184,6 +190,8 @@ class ScriptRunner(QMainWindow):
                         x, y = self.xy[args[1]]
                     else:
                         x, y = int(args[1]), int(args[2])
+                    x = random_xy(x)
+                    y = random_xy(y)
                     run_cmd(self.make_cmd(f"shell input tap {x} {y}"))
                     self.add_cmd_out_signal.emit(
                         f"{line}:{cmd} INFO [点击坐标({x},{y})]"
@@ -203,14 +211,18 @@ class ScriptRunner(QMainWindow):
                     self.home()
                     self.add_cmd_out_signal.emit(f"{line}:{cmd} INFO [回到主页]")
                 elif args[0] == "WAIT":
-                    time.sleep(random_time(args[1]))
+                    s_t = random_time(int(args[1]))
+                    time.sleep(s_t)
+                    self.add_cmd_out_signal.emit(
+                        f"{line}:{cmd} INFO [等待{s_t}秒]"
+                    )
                 elif args[0] == "END":
                     break
             except Exception as e:
                 self.add_cmd_out_signal.emit(f"{line}:{cmd} [{str(e)}]")
                 break
             line += 1
-            time.sleep(random_time(2))
+            time.sleep(random_time(1))
         self.add_cmd_out_signal.emit(f"结束")
 
 
@@ -524,9 +536,13 @@ class ScriptRunChooseDevice(QMainWindow):
 
     def on_click_device_list(self, item):
         self.sr = ScriptRunner(self.dir, item.text())
+        self.sr.on_close.connect(self.on_sr_close)
         self.close()
         self.sr.show()
         self.sr.start()
+
+    def on_sr_close(self):
+        pass
 
 
 class ScriptListWidgetItem(QListWidgetItem):
@@ -547,11 +563,19 @@ class ScriptListWidgetItem(QListWidgetItem):
         run_button.clicked.connect(self.on_click_run)
         editor_button.clicked.connect(self.on_click_edit)
         delete_button.clicked.connect(self.on_click_delete)
+        self.srcds = []
+
+    def on_srcd_close(self,srcd):
+        def func():
+            self.srcds.remove(srcd)
+        return func
 
     def on_click_run(self):
         dir = f"scripts/{self.text()}"
-        self.srcd = ScriptRunChooseDevice(dir)
-        self.srcd.show()
+        srcd = ScriptRunChooseDevice(dir)
+        srcd.on_sr_close = self.on_srcd_close(srcd)
+        srcd.show()
+        self.srcds.append(srcd)
 
     def on_click_delete(self):
         dir = f"scripts/{self.text()}"
