@@ -1,0 +1,3 @@
+HOME
+FIND_IMAGE image0.png image0
+CLICK image0
