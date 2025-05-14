@@ -160,8 +160,10 @@ class ScriptRunner(QMainWindow):
         self.on_close.emit()
         return super().closeEvent(event)
 
-    def get_tag(self, tag):
+    def get_tag(self, tag,line):
         if tag == "CONTINU":
+            return line
+        if tag == "END":
             return -1
         for i, cmd in enumerate(self.script):
             cmd = re.sub(r"\s+", " ", cmd)
@@ -169,7 +171,7 @@ class ScriptRunner(QMainWindow):
             cmd = cmd.lstrip()
             if cmd == f"TAG {tag}":
                 return i
-        return None
+        return -2
 
     def is_num(self, s):
         try:
@@ -202,34 +204,34 @@ class ScriptRunner(QMainWindow):
                 if args[0] == "FIND_IMAGE":
                     pos = self.find_image(args[1])
                     try:
-                        yes = self.get_tag(args[3])
+                        yes = self.get_tag(args[3],line)
                     except Exception as err:
                         yes = None
                     try:
-                        no = self.get_tag(args[4])
+                        no = self.get_tag(args[4],line)
                     except Exception as err:
                         no = None
                     if pos is None:
-                        if no is not None:
-                            if no >= 0:
-                                self.add_cmd_out_signal.emit(
-                                    f"INFO {line}:{cmd} [跳转{no}]"
-                                )
-                                line = no
-                            line += 1
-                            continue
-                        else:
+                        try:
+                            line = self.get_tag(args[4],line)
+                            self.add_cmd_out_signal.emit(
+                                f"INFO {line}:{cmd} [跳转{line}]"
+                            )
+                        except:
                             self.add_cmd_out_signal.emit(
                                 f"ERROR {line}:{cmd} [找不到目标图标{args[1]}]"
                             )
-                            break
+                        line += 1
+                        continue
                     self.variable[args[2]] = pos
                     self.add_cmd_out_signal.emit(
                         f"INFO {line}:{cmd} [找到图片({pos[0]},{pos[1]})]"
                     )
-                    if yes is not None and yes >= 0:
-                        self.add_cmd_out_signal.emit(f"INFO {line}:{cmd} [跳转{yes}]")
-                        line = yes
+                    try:
+                        line = self.get_tag(args[3],line)
+                        self.add_cmd_out_signal.emit(f"INFO {line}:{cmd} [跳转{line}]")
+                    except:
+                        pass
                 elif args[0] == "CLICK":
                     if args.__len__() == 2:
                         x, y = self.variable[args[1]]
@@ -242,8 +244,8 @@ class ScriptRunner(QMainWindow):
                         f"INFO {line}:{cmd} [点击坐标({x},{y})]"
                     )
                 elif args[0] == "SWIP":
-                    x1,y1 = self.variable[args[1]]
-                    x2,y2 = self.variable[args[2]]
+                    x1, y1 = self.variable[args[1]]
+                    x2, y2 = self.variable[args[2]]
                     x1 = random_xy(x1)
                     y1 = random_xy(y1)
                     x2 = random_xy(x2)
@@ -258,36 +260,90 @@ class ScriptRunner(QMainWindow):
                         value = self.variable[args[1]]
                     self.add_cmd_out_signal.emit(f"{args[0]} {value}")
                 elif args[0] == "GO":
-                    tag = self.get_tag(args[1])
-                    if tag is None:
-                        self.add_cmd_out_signal.emit(
-                            f"ERROR {line}:{cmd} [找不到标签{args[1]}]"
-                        )
-                        break
-                    line = tag
+                    line = self.get_tag(args[1],line)
                 elif args[0] == "SET":
-                    self.variable[args[1]] = [float(args[2]), float(args[3])]
-                elif args[0] == "CALC":
-                    xy = [self.variable[args[1]][0],self.variable[args[1]][1]]
-                    if args[2] == "x":
-                        i = 0
-                    elif args[2] == "y":
-                        i = 1
-                    else:
-                        self.add_cmd_out_signal.emit(
-                            f"ERROR {line}:{cmd} [未知变量{args[2]}]"
+                    if args[1] == "VAR":
+                        self.variable[args[2]] = float(args[3])
+                    elif args[1] == "XY":
+                        self.variable[args[2]] = [float(args[3]), float(args[4])]
+                elif args[0] == "IF":
+                    value1 = (
+                            float(args[1])
+                            if self.is_num(args[1])
+                            else self.variable[args[1]]
                         )
-                        break
-                    if args[3] == "+":
-                        xy[i] += float(args[4])
-                    elif args[3] == "-":
-                        xy[i] -= float(args[4])
-                    elif args[3] == "*":
-                        xy[i] *= float(args[4])
-                    elif args[3] == "/":
-                        xy[i] /= float(args[4])
-                    self.variable[args[5]] = xy
-                    self.add_cmd_out_signal.emit(f"INFO {line}:{cmd} [计算结果{xy}]")
+                    value2 = (
+                            float(args[3])
+                            if self.is_num(args[3
+                             ])
+                            else self.variable[args[3]]
+                        )
+                    res = False
+                    if args[2] == "==":
+                        res = value1 == value2
+                    elif args[2] == "!=":
+                        res = value1 != value2
+                    elif args[2] == ">":
+                        res = value1 > value2
+                    elif args[2] == ">=":
+                        res = value1 >= value2
+                    elif args[2] == "<":
+                        res = value1 < value2
+                    elif args[2] == "<=":
+                        res = value1 <= value2
+                    if res:
+                        line = self.get_tag(args[4],line)
+                    else:
+                        line = self.get_tag(args[5],line)
+                elif args[0] == "CALC":
+                    if args[1] == "VAR":
+                        value1 = (
+                            float(args[2])
+                            if self.is_num(args[2])
+                            else self.variable[args[2]]
+                        )
+                        value2 = (
+                            float(args[4])
+                            if self.is_num(args[4])
+                            else self.variable[args[4]]
+                        )
+                        if args[3] == "+":
+                            self.variable[args[5]] = value1 + value2
+                        elif args[3] == "-":
+                            self.variable[args[5]] = value1 - value2
+                        elif args[3] == "*":
+                            self.variable[args[5]] = value1 * value2
+                        elif args[3] == "/":
+                            self.variable[args[5]] = value1 / value2
+
+                    elif args[1] == "XY":
+                        xy = [self.variable[args[2]][0], self.variable[args[2]][1]]
+                        if args[3] == "x":
+                            i = 0
+                        elif args[3] == "y":
+                            i = 1
+                        else:
+                            self.add_cmd_out_signal.emit(
+                                f"ERROR {line}:{cmd} [未知变量{args[3]}]"
+                            )
+                            break
+                        value2 = (
+                            float(args[5])
+                            if self.is_num(args[5])
+                            else self.variable[args[5]]
+                        )
+                        if args[4] == "+":
+                            xy[i] += value2
+                        elif args[4] == "-":
+                            xy[i] -= value2
+                        elif args[4] == "*":
+                            xy[i] *= value2
+                        elif args[4] == "/":
+                            xy[i] /= value2
+                        self.variable[args[6]] = xy
+                        self.add_cmd_out_signal.emit(
+                            f"INFO {line}:{cmd} [计算结果{xy}]"
+                        )
                 elif args[0] == "BACK":
                     self.back()
                     self.add_cmd_out_signal.emit(f"INFO {line}:{cmd} [返回]")
@@ -510,7 +566,7 @@ class ScriptEditorWindow(QMainWindow):
         click_xy_get_button = QPushButton("获取坐标")
         click_xy_get_box.addWidget(click_xy_get_button)
         click_xy_get_button.clicked.connect(self.on_click_click_xy_get)
-        
+
         click_xy_input_box = QHBoxLayout()
         click_xy_label = QLabel("点击坐标")
         click_xy_box.addWidget(click_xy_label)
