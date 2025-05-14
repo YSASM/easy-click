@@ -64,11 +64,11 @@ class ScriptRunner(QMainWindow):
     add_cmd_out_signal = Signal(str)
     on_close = Signal()
 
-    def __init__(self, dir, address, *args, **kwargs):
+    def __init__(self, dir, address,name, *args, **kwargs):
         self.dir = dir
         self.address = address
         super().__init__(*args, **kwargs)
-        self.setWindowTitle("运行")  # 设置窗口标题
+        self.setWindowTitle(f"运行 {address} {name}")  # 设置窗口标题
         self.resize(500, 600)  # 设置窗口大小
         self.cmd_out = QTextEdit()
         self.cmd_out.setReadOnly(True)
@@ -105,6 +105,8 @@ class ScriptRunner(QMainWindow):
 
     def add_cmd_out(self, cmd):
         self.cmd_out_list.append(cmd)
+        if self.cmd_out_list.__len__() > 100:
+            self.cmd_out_list.pop(0)
         self.cmd_out.setText("\n".join(self.cmd_out_list))
         bar = self.cmd_out.verticalScrollBar()
         bar.setValue(bar.maximum())
@@ -160,7 +162,7 @@ class ScriptRunner(QMainWindow):
         self.on_close.emit()
         return super().closeEvent(event)
 
-    def get_tag(self, tag,line):
+    def get_tag(self, tag, line):
         if tag == "CONTINU":
             return line
         if tag == "END":
@@ -204,16 +206,16 @@ class ScriptRunner(QMainWindow):
                 if args[0] == "FIND_IMAGE":
                     pos = self.find_image(args[1])
                     try:
-                        yes = self.get_tag(args[3],line)
+                        yes = self.get_tag(args[3], line)
                     except Exception as err:
                         yes = None
                     try:
-                        no = self.get_tag(args[4],line)
+                        no = self.get_tag(args[4], line)
                     except Exception as err:
                         no = None
                     if pos is None:
                         try:
-                            line = self.get_tag(args[4],line)
+                            line = self.get_tag(args[4], line)
                             self.add_cmd_out_signal.emit(
                                 f"INFO {line}:{cmd} [跳转{line}]"
                             )
@@ -228,7 +230,7 @@ class ScriptRunner(QMainWindow):
                         f"INFO {line}:{cmd} [找到图片({pos[0]},{pos[1]})]"
                     )
                     try:
-                        line = self.get_tag(args[3],line)
+                        line = self.get_tag(args[3], line)
                         self.add_cmd_out_signal.emit(f"INFO {line}:{cmd} [跳转{line}]")
                     except:
                         pass
@@ -260,7 +262,7 @@ class ScriptRunner(QMainWindow):
                         value = self.variable[args[1]]
                     self.add_cmd_out_signal.emit(f"{args[0]} {value}")
                 elif args[0] == "GO":
-                    line = self.get_tag(args[1],line)
+                    line = self.get_tag(args[1], line)
                 elif args[0] == "SET":
                     if args[1] == "VAR":
                         self.variable[args[2]] = float(args[3])
@@ -268,16 +270,15 @@ class ScriptRunner(QMainWindow):
                         self.variable[args[2]] = [float(args[3]), float(args[4])]
                 elif args[0] == "IF":
                     value1 = (
-                            float(args[1])
-                            if self.is_num(args[1])
-                            else self.variable[args[1]]
-                        )
+                        float(args[1])
+                        if self.is_num(args[1])
+                        else self.variable[args[1]]
+                    )
                     value2 = (
-                            float(args[3])
-                            if self.is_num(args[3
-                             ])
-                            else self.variable[args[3]]
-                        )
+                        float(args[3])
+                        if self.is_num(args[3])
+                        else self.variable[args[3]]
+                    )
                     res = False
                     if args[2] == "==":
                         res = value1 == value2
@@ -292,9 +293,9 @@ class ScriptRunner(QMainWindow):
                     elif args[2] == "<=":
                         res = value1 <= value2
                     if res:
-                        line = self.get_tag(args[4],line)
+                        line = self.get_tag(args[4], line)
                     else:
-                        line = self.get_tag(args[5],line)
+                        line = self.get_tag(args[5], line)
                 elif args[0] == "CALC":
                     if args[1] == "VAR":
                         value1 = (
@@ -695,7 +696,8 @@ class ScriptEditorWindow(QMainWindow):
 
 
 class ScriptRunChooseDevice(QMainWindow):
-    def __init__(self, dir):
+    def __init__(self, dir,name):
+        self.name = name
         self.sr = None
         super().__init__()
         self.dir = dir
@@ -720,7 +722,7 @@ class ScriptRunChooseDevice(QMainWindow):
         self.setCentralWidget(self.device_list)
 
     def on_click_device_list(self, item):
-        self.sr = ScriptRunner(self.dir, item.text())
+        self.sr = ScriptRunner(self.dir, item.text(),self.name)
         self.sr.on_close.connect(self.on_sr_close)
         self.close()
         self.sr.show()
@@ -764,7 +766,7 @@ class ScriptListWidgetItem(QListWidgetItem):
 
     def on_click_run(self):
         dir = f"scripts/{self.text()}"
-        srcd = ScriptRunChooseDevice(dir)
+        srcd = ScriptRunChooseDevice(dir,self.text())
         srcd.on_sr_close = self.on_srcd_close(srcd)
         srcd.show()
         self.srcds.append(srcd)

@@ -1,6 +1,7 @@
 WARN 注意！脚本使用mumu模拟器编写，模拟器分辨率为1280x720，请确保分辨率正确
 # 检查再哪个页面
 TAG START
+SET VAR count 10
 # 需要点击进攻页面
 FIND_IMAGE image1.png image1 FIGHT CONTINU
 # 成功页面
@@ -8,7 +9,7 @@ FIND_IMAGE image2.png image2 SUCCESS CONTINU
 # 失败页面
 FIND_IMAGE image4.png image4 FAILD CONTINU
 # 等待开始
-FIND_IMAGE image0.png image0 CHECK_TIMES HASNOT_ITEM
+FIND_IMAGE image0.png image0 CHECK_TIMES SWIPE_CHECK
 
 TAG CHECK_TIMES
 # 看还有没有次数
@@ -31,16 +32,19 @@ FIND_IMAGE image2.png image2 SUCCESS WAIT
 TAG FLASH
 # 刷新寮突
 LOG 刷新寮突
+FIND_IMAGE image9.png image9
+CLICK image9
+WAIT 2
+FIND_IMAGE image6.png image6
+CLICK image6
+WAIT 2
 FIND_IMAGE image7.png image7
 CLICK image7
 WAIT 2
-FIND_IMAGE image7.png image5
-CLICK image5
+FIND_IMAGE image8.png image8
+CLICK image8
 WAIT 2
-FIND_IMAGE image7.png image6
-CLICK image6
-WAIT 2
-GO_START
+GO START
 
 TAG SUCCESS
 WAIT 3
@@ -54,12 +58,18 @@ CLICK image4
 WAIT 3
 GO START
 
-TAG HASNOT_ITEM
-FIND_IMAGE image8.png image8 CONTINU PAGE_ERROR
-CALC XY image8 y + 50 pos1
-SWIP image8 pos1
+TAG SWIPE_CHECK
+FIND_IMAGE image5.png image5 CONTINU PAGE_ERROR
+CALC XY image5 y + 35 pos1
+SWIP image5 pos1
 WAIT 3
 FIND_IMAGE image0.png image0 CHECK_TIMES CONTINU
+CALC VAR count + 1 count
+IF count > 20 HASNOT_ITEM SWIPE_CHECK
+
+
+TAG HASNOT_ITEM
+
 LOG 全部攻破
 END
 
