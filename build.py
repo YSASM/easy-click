@@ -77,3 +77,4 @@ if __name__ == '__main__':
     shutil.rmtree("build")
     shutil.move("dist/main.exe", "main.exe")
     shutil.rmtree("dist")
+    os.remove("main.spec")

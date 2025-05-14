@@ -1,0 +1,69 @@
+WARN 注意！模拟器分辨率为1280x720，请确保分辨率正确
+WARN 要在寮突破页面启动
+# 检查再哪个页面
+TAG START
+# 需要点击进攻页面
+FIND_IMAGE image1.png image1 FIGHT CONTINU
+# 成功页面
+FIND_IMAGE image2.png image2 SUCCESS CONTINU
+# 失败页面
+FIND_IMAGE image4.png image4 FAILD CONTINU
+# 等待开始
+FIND_IMAGE image0.png image0 CHECK_TIMES HASNOT_ITEM
+
+TAG CHECK_TIMES
+# 看还有没有次数
+FIND_IMAGE image3.png image3 HASNOT_TIMES CONTINU
+FIND_IMAGE image0.png image0
+CLICK image0
+WAIT 2
+FIND_IMAGE image1.png image1 CONTINU FLASH
+TAG FIGHT
+CLICK image1
+
+
+TAG WAIT
+WAIT 2
+# 如果还在刚才页面
+FIND_IMAGE image1.png image1 FLASH CONTINU 
+FIND_IMAGE image4.png image4 FAILD CONTINU
+FIND_IMAGE image2.png image2 SUCCESS WAIT
+
+TAG FLASH
+# 刷新寮突
+FIND_IMAGE image7.png image7
+CLICK image7
+FIND_IMAGE image7.png image5
+CLICK image5
+FIND_IMAGE image7.png image6
+CLICK image6
+GO_START
+
+TAG SUCCESS
+WAIT 3
+CLICK image2
+WAIT 3
+GO START
+
+TAG FAILD
+WAIT 3
+CLICK image4
+WAIT 3
+GO START
+
+TAG HASNOT_ITEM
+FIND_IMAGE image8.png image8 CONTINU PAGE_ERROR
+CALC image8 y + 50 pos1
+SWIP image8 pos1
+WAIT 3
+FIND_IMAGE image0.png image0 CHECK_TIMES CONTINU
+LOG 全部攻破
+END
+
+TAG HASNOT_TIMES
+LOG 次数不足
+END
+
+TAG PAGE_ERROR
+ERROR 不在寮突页面
+END

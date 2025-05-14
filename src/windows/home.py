@@ -1,3 +1,4 @@
+import json
 import os
 import random
 import re
@@ -19,12 +20,15 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QMessageBox,
 )
-from PySide6.QtCore import Signal, QRect, QThread
-from PySide6.QtGui import QPixmap, QPainter, QPen, qRgb
+from PySide6.QtCore import Signal, QRect, Qt
+from PySide6.QtGui import QPixmap, QPainter, QPen, qRgb, QTextCharFormat, QTextCursor
 from PIL import Image
 import cv2
 import numpy as np
 import uuid
+
+from src.widgets.label import Label
+
 if not os.path.exists("scripts"):
     os.mkdir("scripts")
 
@@ -38,6 +42,7 @@ def run_cmd(command):
 
 
 tasks = []
+RED = qRgb(255, 0, 0)
 
 
 def random_time(t):
@@ -47,11 +52,13 @@ def random_time(t):
         return t + random.randint(0, 1) / 10
     return t - random.randint(0, 9) / 10
 
+
 def random_xy(t):
     int_num = random.randint(-2, 2)
     float_num = random.randint(-9, 9) / 10
     random_num = int_num + float_num
     return t + random_num
+
 
 class ScriptRunner(QMainWindow):
     add_cmd_out_signal = Signal(str)
@@ -69,15 +76,39 @@ class ScriptRunner(QMainWindow):
         self.cmd_out_list = []
         with open(f"{self.dir}/index.txt", "r+", encoding="utf-8") as f:
             self.script = f.read().split("\n")
-        self.xy = {}
+        self.variable = {}
         self.add_cmd_out_signal.connect(self.add_cmd_out)
         self.closed = False
+
+    def set_cmd_out_color(self):
+        cursor = self.cmd_out.textCursor()
+        self.cmd_out.setFocus()
+        count = 0
+        for cmd in self.cmd_out_list:
+            fmt = QTextCharFormat()
+            if cmd.startswith("INFO"):
+                fmt.setForeground(Qt.GlobalColor.gray)
+            elif cmd.startswith("ERROR"):
+                fmt.setForeground(Qt.GlobalColor.red)
+            elif cmd.startswith("WARN"):
+                fmt.setForeground(Qt.GlobalColor.yellow)
+            elif cmd.startswith("LOG"):
+                fmt.setForeground(Qt.GlobalColor.blue)
+            else:
+                fmt.setForeground(Qt.GlobalColor.black)
+            cursor.setPosition(count, QTextCursor.MoveMode.MoveAnchor)
+            count = count + len(cmd)
+            cursor.setPosition(count, QTextCursor.MoveMode.KeepAnchor)
+            cursor.mergeCharFormat(fmt)
+            self.cmd_out.mergeCurrentCharFormat(fmt)
+            count += 1
 
     def add_cmd_out(self, cmd):
         self.cmd_out_list.append(cmd)
         self.cmd_out.setText("\n".join(self.cmd_out_list))
         bar = self.cmd_out.verticalScrollBar()
         bar.setValue(bar.maximum())
+        self.set_cmd_out_color()
 
     def make_cmd(self, cmd):
         return f"adb -s {self.address} {cmd}"
@@ -91,7 +122,7 @@ class ScriptRunner(QMainWindow):
             self.make_cmd(f"pull /sdcard/screenshot.png {self.dir}/temp/image{id}.png")
         )
         image = Image.open(f"{self.dir}/temp/image{id}.png")
-        return image,f"{self.dir}/temp/image{id}.png"
+        return image, f"{self.dir}/temp/image{id}.png"
 
     def pillow_to_cv2(self, image: Image):
         return cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
@@ -100,7 +131,7 @@ class ScriptRunner(QMainWindow):
         return Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
 
     def find_image(self, name):
-        big_image,temp_path = self.cut_image()
+        big_image, temp_path = self.cut_image()
         big_image = self.pillow_to_cv2(big_image)
         small_image = self.pillow_to_cv2(Image.open(f"{self.dir}/images/{name}"))
         result = cv2.matchTemplate(big_image, small_image, cv2.TM_CCOEFF_NORMED)
@@ -130,11 +161,22 @@ class ScriptRunner(QMainWindow):
         return super().closeEvent(event)
 
     def get_tag(self, tag):
+        if tag == "CONTINU":
+            return -1
         for i, cmd in enumerate(self.script):
             cmd = re.sub(r"\s+", " ", cmd)
+            cmd = cmd.strip()
+            cmd = cmd.lstrip()
             if cmd == f"TAG {tag}":
                 return i
         return None
+
+    def is_num(self, s):
+        try:
+            float(s)
+            return True
+        except ValueError:
+            return False
 
     def run(self):
         line = 0
@@ -151,6 +193,8 @@ class ScriptRunner(QMainWindow):
                     line += 1
                     continue
                 cmd = re.sub(r"\s+", " ", cmd)
+                cmd = cmd.strip()
+                cmd = cmd.lstrip()
                 if cmd == "" or cmd == " ":
                     line += 1
                     continue
@@ -159,70 +203,107 @@ class ScriptRunner(QMainWindow):
                     pos = self.find_image(args[1])
                     try:
                         yes = self.get_tag(args[3])
-                    except:
+                    except Exception as err:
                         yes = None
                     try:
                         no = self.get_tag(args[4])
-                    except:
+                    except Exception as err:
                         no = None
                     if pos is None:
-                        self.add_cmd_out_signal.emit(
-                            f"{line}:{cmd} ERROR [找不到目标图标{args[1]}]"
-                        )
                         if no is not None:
-                            self.add_cmd_out_signal.emit(
-                                f"{line}:{cmd} INFO [跳转{no}]"
-                            )
-                            line = no
+                            if no >= 0:
+                                self.add_cmd_out_signal.emit(
+                                    f"INFO {line}:{cmd} [跳转{no}]"
+                                )
+                                line = no
                             line += 1
                             continue
                         else:
+                            self.add_cmd_out_signal.emit(
+                                f"ERROR {line}:{cmd} [找不到目标图标{args[1]}]"
+                            )
                             break
-                    self.xy[args[2]] = pos
+                    self.variable[args[2]] = pos
                     self.add_cmd_out_signal.emit(
-                        f"{line}:{cmd} INFO [找到图片({pos[0]},{pos[1]})]"
+                        f"INFO {line}:{cmd} [找到图片({pos[0]},{pos[1]})]"
                     )
-                    if yes is not None:
-                        self.add_cmd_out_signal.emit(f"{line}:{cmd} INFO [跳转{yes}]")
+                    if yes is not None and yes >= 0:
+                        self.add_cmd_out_signal.emit(f"INFO {line}:{cmd} [跳转{yes}]")
                         line = yes
                 elif args[0] == "CLICK":
                     if args.__len__() == 2:
-                        x, y = self.xy[args[1]]
+                        x, y = self.variable[args[1]]
                     else:
-                        x, y = int(args[1]), int(args[2])
+                        x, y = float(args[1]), float(args[2])
                     x = random_xy(x)
                     y = random_xy(y)
                     run_cmd(self.make_cmd(f"shell input tap {x} {y}"))
                     self.add_cmd_out_signal.emit(
-                        f"{line}:{cmd} INFO [点击坐标({x},{y})]"
+                        f"INFO {line}:{cmd} [点击坐标({x},{y})]"
                     )
+                elif args[0] == "SWIP":
+                    x1,y1 = self.variable[args[1]]
+                    x2,y2 = self.variable[args[2]]
+                    x1 = random_xy(x1)
+                    y1 = random_xy(y1)
+                    x2 = random_xy(x2)
+                    y2 = random_xy(y2)
+                    run_cmd(self.make_cmd(f"shell input swipe {x1} {y1} {x2} {y2}"))
+                    self.add_cmd_out_signal.emit(
+                        f"INFO {line}:{cmd} [滑动坐标({x1},{y1})到({x2},{y2})]"
+                    )
+                elif args[0] in ["LOG", "ERROR", "WARN", "INFO"]:
+                    value = args[1]
+                    if args[1] in self.variable.keys():
+                        value = self.variable[args[1]]
+                    self.add_cmd_out_signal.emit(f"{args[0]} {value}")
                 elif args[0] == "GO":
                     tag = self.get_tag(args[1])
                     if tag is None:
                         self.add_cmd_out_signal.emit(
-                            f"{line}:{cmd} ERROR [找不到标签{args[1]}]"
+                            f"ERROR {line}:{cmd} [找不到标签{args[1]}]"
                         )
                         break
                     line = tag
+                elif args[0] == "SET":
+                    self.variable[args[1]] = [float(args[2]), float(args[3])]
+                elif args[0] == "CALC":
+                    xy = [self.variable[args[1]][0],self.variable[args[1]][1]]
+                    if args[2] == "x":
+                        i = 0
+                    elif args[2] == "y":
+                        i = 1
+                    else:
+                        self.add_cmd_out_signal.emit(
+                            f"ERROR {line}:{cmd} [未知变量{args[2]}]"
+                        )
+                        break
+                    if args[3] == "+":
+                        xy[i] += float(args[4])
+                    elif args[3] == "-":
+                        xy[i] -= float(args[4])
+                    elif args[3] == "*":
+                        xy[i] *= float(args[4])
+                    elif args[3] == "/":
+                        xy[i] /= float(args[4])
+                    self.variable[args[5]] = xy
+                    self.add_cmd_out_signal.emit(f"INFO {line}:{cmd} [计算结果{xy}]")
                 elif args[0] == "BACK":
                     self.back()
-                    self.add_cmd_out_signal.emit(f"{line}:{cmd} INFO [返回]")
+                    self.add_cmd_out_signal.emit(f"INFO {line}:{cmd} [返回]")
                 elif args[0] == "HOME":
                     self.home()
-                    self.add_cmd_out_signal.emit(f"{line}:{cmd} INFO [回到主页]")
+                    self.add_cmd_out_signal.emit(f"INFO {line}:{cmd} [回到主页]")
                 elif args[0] == "WAIT":
-                    s_t = random_time(int(args[1]))
+                    s_t = random_time(float(args[1]))
+                    self.add_cmd_out_signal.emit(f"INFO {line}:{cmd} [等待{s_t}秒]")
                     time.sleep(s_t)
-                    self.add_cmd_out_signal.emit(
-                        f"{line}:{cmd} INFO [等待{s_t}秒]"
-                    )
                 elif args[0] == "END":
                     break
             except Exception as e:
                 self.add_cmd_out_signal.emit(f"{line}:{cmd} [{str(e)}]")
                 break
             line += 1
-            time.sleep(random_time(1))
         self.add_cmd_out_signal.emit(f"结束")
 
 
@@ -275,7 +356,7 @@ class Drawing(QWidget):
     def drawRect(self, qp: QPainter):
         # 创建红色，宽度为4像素的画笔
         pen = QPen()
-        pen.setColor(qRgb(255, 0, 0))
+        pen.setColor(RED)
         pen.setWidth(4)
         qp.setPen(pen)
         qp.drawRect(*self.rect)
@@ -292,6 +373,38 @@ class Drawing(QWidget):
         start_x, start_y = self.rect[0:2]
         self.rect = (start_x, start_y, event.x() - start_x, event.y() - start_y)
         self.update()
+
+
+class GetXYWindow(QMainWindow):
+    getted = Signal(list)
+
+    def __init__(self, dir):
+        self.dir = dir
+        super().__init__()  # 调用父类 QMainWindow 的初始化方法
+        if not os.path.exists(dir + "/temp"):
+            os.mkdir(dir + "/temp")
+        id = os.listdir(dir + "/temp").__len__()
+        run_cmd("adb shell screencap -p /sdcard/screenshot.png")
+        run_cmd(f"adb pull /sdcard/screenshot.png {dir}/temp/image{id}.png")
+        time.sleep(1)
+        self.resize(200, 100)  # 设置窗口大小
+        self.setWindowTitle("取点")  # 设置窗口标题
+        central_widget = QWidget(self)
+        self.setCentralWidget(central_widget)
+        self.image = QPixmap(f"{dir}/temp/image{id}.png")
+        os.remove(f"{dir}/temp/image{id}.png")
+        self.show_image = Label()
+        self.show_image.setPixmap(self.image)
+        self.show_image.setFixedSize(self.image.size())
+        v_box = QGridLayout()
+        central_widget.setLayout(v_box)
+        v_box.addWidget(self.show_image, 0, 0)
+        self.show_image.clicked.connect(self.on_click)
+
+    def on_click(self, event):
+        xy = [event.x(), event.y()]
+        self.getted.emit(xy)
+        self.close()
 
 
 class CutImageWindow(QMainWindow):
@@ -392,6 +505,12 @@ class ScriptEditorWindow(QMainWindow):
         # WAIT 3 | 等待 3 秒
         click_xy_box = QVBoxLayout()
         v_box.addLayout(click_xy_box)
+        click_xy_get_box = QHBoxLayout()
+        click_xy_box.addLayout(click_xy_get_box)
+        click_xy_get_button = QPushButton("获取坐标")
+        click_xy_get_box.addWidget(click_xy_get_button)
+        click_xy_get_button.clicked.connect(self.on_click_click_xy_get)
+        
         click_xy_input_box = QHBoxLayout()
         click_xy_label = QLabel("点击坐标")
         click_xy_box.addWidget(click_xy_label)
@@ -462,6 +581,15 @@ class ScriptEditorWindow(QMainWindow):
         self.cut_image_window.update_image_list = self.update_image_list
         self.cut_image_window.show()
 
+    def on_getted(self, xy):
+        self.click_xy_x.setText(str(xy[0]))
+        self.click_xy_y.setText(str(xy[1]))
+
+    def on_click_click_xy_get(self):
+        self.get_xy_window = GetXYWindow(self.dir)
+        self.get_xy_window.getted.connect(self.on_getted)
+        self.get_xy_window.show()
+
     def on_click_image_list_add_image(self, file_name):
         name = file_name.replace(".png", "")
 
@@ -512,6 +640,7 @@ class ScriptEditorWindow(QMainWindow):
 
 class ScriptRunChooseDevice(QMainWindow):
     def __init__(self, dir):
+        self.sr = None
         super().__init__()
         self.dir = dir
         self.resize(800, 600)
@@ -541,6 +670,11 @@ class ScriptRunChooseDevice(QMainWindow):
         self.sr.show()
         self.sr.start()
 
+    def childEvent(self, event):
+        if self.sr is None:
+            self.on_sr_close()
+        return super().childEvent(event)
+
     def on_sr_close(self):
         pass
 
@@ -565,9 +699,11 @@ class ScriptListWidgetItem(QListWidgetItem):
         delete_button.clicked.connect(self.on_click_delete)
         self.srcds = []
 
-    def on_srcd_close(self,srcd):
+    def on_srcd_close(self, srcd):
         def func():
-            self.srcds.remove(srcd)
+            if srcd in self.srcds:
+                self.srcds.remove(srcd)
+
         return func
 
     def on_click_run(self):
