@@ -214,9 +214,14 @@ class ScriptRunner(QMainWindow):
             self.import_script_runner.close()
 
     def import_script(self, name):
-        self.import_script_runner = ScriptRunner(f"scripts/{name}", self.address, name)
-        self.import_script_runner.start()
-        self.import_script_runner.show()
+        try:
+            self.import_script_runner = ScriptRunner(
+                f"scripts/{name}", self.address, name
+            )
+            self.import_script_runner.start()
+            self.import_script_runner.show()
+        except Exception as e:
+            HomeWindow.add_cmd_out(self, str(e))
 
     def run(self):
         line = 0
@@ -236,9 +241,7 @@ class ScriptRunner(QMainWindow):
                 break
             try:
                 if running_import:
-                    if (
-                        self.import_script_runner and self.import_script_runner.end
-                    ):
+                    if self.import_script_runner and self.import_script_runner.end:
                         self.cmd_out_list += self.import_script_runner.cmd_out_list[
                             1:-1
                         ]
@@ -285,7 +288,9 @@ class ScriptRunner(QMainWindow):
                     try:
                         ord_line = line
                         line = self.get_tag(args[3], line)
-                        self.add_cmd_out_signal.emit(f"INFO {ord_line}:{cmd} [跳转{line}]")
+                        self.add_cmd_out_signal.emit(
+                            f"INFO {ord_line}:{cmd} [跳转{line}]"
+                        )
                     except:
                         pass
                 elif args[0] == "CLICK":
@@ -306,7 +311,11 @@ class ScriptRunner(QMainWindow):
                     y1 = random_xy(y1)
                     x2 = random_xy(x2)
                     y2 = random_xy(y2)
-                    run_cmd(self.make_cmd(f"shell input swipe {x1} {y1} {x2} {y2} {random.randint(5,9)}00"))
+                    run_cmd(
+                        self.make_cmd(
+                            f"shell input swipe {x1} {y1} {x2} {y2} {random.randint(5,9)}00"
+                        )
+                    )
                     self.add_cmd_out_signal.emit(
                         f"INFO {line}:{cmd} [滑动坐标({x1},{y1})到({x2},{y2})]"
                     )
@@ -417,6 +426,7 @@ class ScriptRunner(QMainWindow):
                     break
             except Exception as e:
                 self.add_cmd_out_signal.emit(f"{line}:{cmd} [{str(e)}]")
+                HomeWindow.add_cmd_out(self, str(e))
                 break
             line += 1
         self.add_cmd_out_signal.emit(f"结束")
@@ -494,14 +504,15 @@ class Drawing(QWidget):
 class GetXYWindow(QMainWindow):
     getted = Signal(list)
 
-    def __init__(self, dir):
+    def __init__(self, dir,address):
         self.dir = dir
+        self.address = address
         super().__init__()  # 调用父类 QMainWindow 的初始化方法
         if not os.path.exists(dir + "/temp"):
             os.mkdir(dir + "/temp")
         id = os.listdir(dir + "/temp").__len__()
-        run_cmd("adb shell screencap -p /sdcard/screenshot.png")
-        run_cmd(f"adb pull /sdcard/screenshot.png {dir}/temp/image{id}.png")
+        run_cmd(self.make_cmd("shell screencap -p /sdcard/screenshot.png"))
+        run_cmd(self.make_cmd(f"pull /sdcard/screenshot.png {dir}/temp/image{id}.png"))
         time.sleep(1)
         self.resize(200, 100)  # 设置窗口大小
         self.setWindowTitle("取点")  # 设置窗口标题
@@ -516,6 +527,11 @@ class GetXYWindow(QMainWindow):
         central_widget.setLayout(v_box)
         v_box.addWidget(self.show_image, 0, 0)
         self.show_image.clicked.connect(self.on_click)
+    
+    def make_cmd(self, cmd):
+        if self.address == "":
+            return f"adb {cmd}"
+        return f"adb -s {self.address} {cmd}"
 
     def on_click(self, event):
         xy = [event.x(), event.y()]
@@ -524,14 +540,15 @@ class GetXYWindow(QMainWindow):
 
 
 class CutImageWindow(QMainWindow):
-    def __init__(self, dir):
+    def __init__(self, dir,address):
         self.dir = dir
+        self.address = address
         super().__init__()  # 调用父类 QMainWindow 的初始化方法
         if not os.path.exists(dir + "/temp"):
             os.mkdir(dir + "/temp")
         id = os.listdir(dir + "/temp").__len__()
-        run_cmd("adb shell screencap -p /sdcard/screenshot.png")
-        run_cmd(f"adb pull /sdcard/screenshot.png {dir}/temp/image{id}.png")
+        run_cmd(self.make_cmd("shell screencap -p /sdcard/screenshot.png"))
+        run_cmd(self.make_cmd(f"pull /sdcard/screenshot.png {dir}/temp/image{id}.png"))
         time.sleep(1)
         self.resize(200, 100)  # 设置窗口大小
         self.setWindowTitle("截图")  # 设置窗口标题
@@ -551,6 +568,11 @@ class CutImageWindow(QMainWindow):
         ok = QPushButton("确定")
         v_box.addWidget(ok)
         ok.clicked.connect(self.on_click_ok)
+
+    def make_cmd(self, cmd):
+        if self.address == "":
+            return f"adb {cmd}"
+        return f"adb -s {self.address} {cmd}"
 
     def on_click_ok(self):
         x, y, w, h = self.cut_box.rect
@@ -624,13 +646,20 @@ class ScriptEditorWindow(QMainWindow):
         # CLICK argname | 点击 argname
         # SEND_TEXT "ssdasda" | 输入 XXX
         # WAIT 3 | 等待 3 秒
+        HomeWindow.check_adb()
+        self.adb_address = QLineEdit(
+            HomeWindow.adb_devices[0] if len(HomeWindow.adb_devices) > 0 else ""
+        )
+        v_box.addWidget(self.adb_address)
         click_xy_box = QVBoxLayout()
         v_box.addLayout(click_xy_box)
+        
         click_xy_get_box = QHBoxLayout()
         click_xy_box.addLayout(click_xy_get_box)
         click_xy_get_button = QPushButton("获取坐标")
         click_xy_get_box.addWidget(click_xy_get_button)
         click_xy_get_button.clicked.connect(self.on_click_click_xy_get)
+        
 
         click_xy_input_box = QHBoxLayout()
         click_xy_label = QLabel("点击坐标")
@@ -699,7 +728,7 @@ class ScriptEditorWindow(QMainWindow):
         self.editor.setText(self.editor.toPlainText() + f"\nCLICK {x} {y}")
 
     def on_click_add_image(self):
-        self.cut_image_window = CutImageWindow(self.dir)
+        self.cut_image_window = CutImageWindow(self.dir,self.adb_address.text())
         self.cut_image_window.update_image_list = self.update_image_list
         self.cut_image_window.show()
 
@@ -708,7 +737,7 @@ class ScriptEditorWindow(QMainWindow):
         self.click_xy_y.setText(str(xy[1]))
 
     def on_click_click_xy_get(self):
-        self.get_xy_window = GetXYWindow(self.dir)
+        self.get_xy_window = GetXYWindow(self.dir,self.adb_address.text())
         self.get_xy_window.getted.connect(self.on_getted)
         self.get_xy_window.show()
 
@@ -783,25 +812,20 @@ class ScriptRunChooseDevice(QMainWindow):
             "QListWidget::item { padding: 5px;height:40px; }"
         )
         self.device_list.itemDoubleClicked.connect(self.on_click_device_list)
-        for line in run_cmd("adb devices").splitlines():
-            if line.startswith("List"):
-                continue
-            if line.startswith("*"):
-                continue
-            if line == "\n":
-                continue
-            device = line.split("\t")[0]
-            if device == "":
-                continue
+        HomeWindow.check_adb()
+        for device in HomeWindow.adb_devices:
             self.device_list.addItem(device)
         self.setCentralWidget(self.device_list)
 
     def on_click_device_list(self, item):
-        self.sr = ScriptRunner(self.dir, item.text(), self.name)
-        self.sr.on_close.connect(self.on_sr_close)
-        self.close()
-        self.sr.show()
-        self.sr.start()
+        try:
+            self.sr = ScriptRunner(self.dir, item.text(), self.name)
+            self.sr.on_close.connect(self.on_sr_close)
+            self.close()
+            self.sr.show()
+            self.sr.start()
+        except Exception as e:
+            HomeWindow.add_cmd_out(self, str(e))
 
     def childEvent(self, event):
         if self.sr is None:
@@ -840,11 +864,16 @@ class ScriptListWidgetItem(QListWidgetItem):
         return func
 
     def on_click_run(self):
-        dir = f"scripts/{self.text()}"
-        srcd = ScriptRunChooseDevice(dir, self.text())
-        srcd.on_sr_close = self.on_srcd_close(srcd)
-        srcd.show()
-        self.srcds.append(srcd)
+        if len(HomeWindow.adb_devices) == 0:
+            return HomeWindow.add_cmd_out(self, "没有设备")
+        try:
+            dir = f"scripts/{self.text()}"
+            srcd = ScriptRunChooseDevice(dir, self.text())
+            srcd.on_sr_close = self.on_srcd_close(srcd)
+            srcd.show()
+            self.srcds.append(srcd)
+        except Exception as e:
+            HomeWindow.add_cmd_out(self, str(e))
 
     def on_click_delete(self):
         dir = f"scripts/{self.text()}"
@@ -861,6 +890,14 @@ class ScriptListWidgetItem(QListWidgetItem):
 
 
 class HomeWindow(QMainWindow):
+    cmd_out_list = []
+    adb_devices = []
+    update_cmd_out_signal = Signal()
+
+    @classmethod
+    def add_cmd_out(cls, obj: object, cmd_out):
+        cls.cmd_out_list.append(f"{obj.__class__.__name__} {cmd_out}")
+
     def __init__(self):
         super().__init__()  # 调用父类 QMainWindow 的初始化方法
         self.resize(800, 600)  # 设置窗口大小
@@ -881,9 +918,65 @@ class HomeWindow(QMainWindow):
             "QListWidget::item { padding: 5px;height:40px; }"
         )
         vbox_layout.addWidget(self.script_list)
+        connect_adb_box = QHBoxLayout()
+        vbox_layout.addLayout(connect_adb_box)
+        input_label = QLabel("输入设备地址")
+        connect_adb_box.addWidget(input_label)
+        self.input_address = QLineEdit("127.0.0.1:7555")
+        connect_adb_box.addWidget(self.input_address)
+        connect_adb_button = QPushButton("连接")
+        connect_adb_box.addWidget(connect_adb_button)
+        connect_adb_button.clicked.connect(self.connect_adb)
         add_script.clicked.connect(self.on_click_add_script)
         self.add_script_window.added.connect(self.on_add_script)
         self.update_script_list()
+        self.cmd_out = QTextEdit()
+        self.cmd_out.setReadOnly(True)
+        self.cmd_out.setFixedHeight(200)
+        vbox_layout.addWidget(self.cmd_out)
+        clear_cmd_out = QPushButton("清空")
+        vbox_layout.addWidget(clear_cmd_out)
+        clear_cmd_out.clicked.connect(self.clear_cmd_out)
+        self.update_cmd_out_signal.connect(self.update_cmd_out)
+        self.start_reflash_cmd_out()
+
+    def connect_adb(self):
+        res = run_cmd("adb connect " + self.input_address.text())
+        self.add_cmd_out(self, res)
+
+    def clear_cmd_out(self):
+        self.cmd_out_list.clear()
+
+    @classmethod
+    def check_adb(self):
+        self.adb_devices.clear()
+        for line in run_cmd("adb devices").splitlines():
+            if line.startswith("List"):
+                continue
+            if line.startswith("*"):
+                continue
+            if line == "\n":
+                continue
+            device = line.split("\t")[0]
+            if device == "":
+                continue
+            self.adb_devices.append(device)
+            HomeWindow.add_cmd_out(self, f"检测到设备 {device}")
+
+    def update_cmd_out(self):
+        info = "\n".join(self.cmd_out_list)
+        if info != self.cmd_out.toPlainText():
+            self.cmd_out.setText(info)
+
+    def reflash_cmd_out(self):
+        while True:
+            self.update_cmd_out_signal.emit()
+            time.sleep(1)
+
+    def start_reflash_cmd_out(self):
+        self.reflash_thread = Thread(target=self.reflash_cmd_out)
+        self.reflash_thread.setDaemon(True)
+        self.reflash_thread.start()
 
     def get_tasks(self):
         return tasks
