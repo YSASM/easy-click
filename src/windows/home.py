@@ -864,6 +864,7 @@ class ScriptListWidgetItem(QListWidgetItem):
         return func
 
     def on_click_run(self):
+        HomeWindow.check_adb()
         if len(HomeWindow.adb_devices) == 0:
             return HomeWindow.add_cmd_out(self, "没有设备")
         try:
@@ -936,13 +937,22 @@ class HomeWindow(QMainWindow):
         vbox_layout.addWidget(self.cmd_out)
         clear_cmd_out = QPushButton("清空")
         vbox_layout.addWidget(clear_cmd_out)
+        about_box = QHBoxLayout()
+        vbox_layout.addLayout(about_box)
+        about_name = QLabel("声明：本软件仅供学习交流，不收取任何费用！！！！ by: 杳末钎散 ")
+        about_box.addWidget(about_name)
+        connect = QLineEdit("QQ: 1613921123 Github: https://github.com/YSASM/easy-click")
+        connect.setReadOnly(True)
+        about_box.addWidget(connect)
         clear_cmd_out.clicked.connect(self.clear_cmd_out)
         self.update_cmd_out_signal.connect(self.update_cmd_out)
         self.start_reflash_cmd_out()
+        HomeWindow.check_adb()
 
     def connect_adb(self):
         res = run_cmd("adb connect " + self.input_address.text())
         self.add_cmd_out(self, res)
+        HomeWindow.check_adb()
 
     def clear_cmd_out(self):
         self.cmd_out_list.clear()
