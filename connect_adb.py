@@ -30,7 +30,7 @@ def get_installation_dir(exe_path):
     try:
         path_parts = exe_path.split(os.sep)
         # 查找关键路径节点（适配不同版本路径结构）
-        for key in ["MuMuPlayer-12.0"]:
+        for key in ["MuMuPlayer-12.0","MuMuPlayer 12"]:
             if key in path_parts:
                 key_index = path_parts.index(key)
                 return os.sep.join(path_parts[: key_index + 1])
