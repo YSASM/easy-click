@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QMessageBox,
 )
-from PySide6.QtCore import Signal, QRect, Qt
+from PySide6.QtCore import Signal, QRect, Qt, QSize
 from PySide6.QtGui import QPixmap, QPainter, QPen, qRgb, QTextCharFormat, QTextCursor
 from PIL import Image
 import cv2
@@ -28,6 +28,7 @@ import numpy as np
 import uuid
 
 from src.widgets.label import Label
+from src.widgets.image import Image as ImageView
 
 if not os.path.exists("scripts"):
     os.mkdir("scripts")
@@ -62,9 +63,12 @@ def random_xy(t):
 
 class ScriptRunner(QMainWindow):
     add_cmd_out_signal = Signal(str)
+    update_cmd_out_signal = Signal()
     on_close = Signal()
+    import_script_signal = Signal(str)
+    close_import_script_runner_signal = Signal()
 
-    def __init__(self, dir, address,name, *args, **kwargs):
+    def __init__(self, dir, address, name, *args, **kwargs):
         self.dir = dir
         self.address = address
         super().__init__(*args, **kwargs)
@@ -78,7 +82,13 @@ class ScriptRunner(QMainWindow):
             self.script = f.read().split("\n")
         self.variable = {}
         self.add_cmd_out_signal.connect(self.add_cmd_out)
+        self.update_cmd_out_signal.connect(self.update_cmd_out)
+        self.import_script_signal.connect(self.import_script)
+        self.close_import_script_runner_signal.connect(self.close_import_script_runner)
         self.closed = False
+        self.th = None
+        self.import_script_runner = None
+        self.end = False
 
     def set_cmd_out_color(self):
         cursor = self.cmd_out.textCursor()
@@ -102,6 +112,14 @@ class ScriptRunner(QMainWindow):
             cursor.mergeCharFormat(fmt)
             self.cmd_out.mergeCurrentCharFormat(fmt)
             count += 1
+
+    def update_cmd_out(self):
+        if self.cmd_out_list.__len__() > 100:
+            self.cmd_out_list = self.cmd_out_list[-100:]
+        self.cmd_out.setText("\n".join(self.cmd_out_list))
+        bar = self.cmd_out.verticalScrollBar()
+        bar.setValue(bar.maximum())
+        self.set_cmd_out_color()
 
     def add_cmd_out(self, cmd):
         self.cmd_out_list.append(cmd)
@@ -152,10 +170,19 @@ class ScriptRunner(QMainWindow):
     def home(self):
         run_cmd(self.make_cmd("shell input keyevent 3"))
 
+    def start_app(self, package):
+        res = run_cmd(self.make_cmd("shell ps"))
+        if not package in res:
+            run_cmd(
+                self.make_cmd(
+                    f"shell monkey -p {package} -c android.intent.category.LAUNCHER 1"
+                )
+            )
+
     def start(self):
-        th = Thread(target=self.run)
-        tasks.append(th)
-        th.start()
+        self.th = Thread(target=self.run)
+        tasks.append(self.th)
+        self.th.start()
 
     def closeEvent(self, event):
         self.closed = True
@@ -166,14 +193,14 @@ class ScriptRunner(QMainWindow):
         if tag == "CONTINU":
             return line
         if tag == "END":
-            return -1
+            return -2
         for i, cmd in enumerate(self.script):
             cmd = re.sub(r"\s+", " ", cmd)
             cmd = cmd.strip()
             cmd = cmd.lstrip()
             if cmd == f"TAG {tag}":
                 return i
-        return -2
+        return -3
 
     def is_num(self, s):
         try:
@@ -182,10 +209,25 @@ class ScriptRunner(QMainWindow):
         except ValueError:
             return False
 
+    def close_import_script_runner(self):
+        if self.import_script_runner is not None:
+            self.import_script_runner.close()
+
+    def import_script(self, name):
+        self.import_script_runner = ScriptRunner(f"scripts/{name}", self.address, name)
+        self.import_script_runner.start()
+        self.import_script_runner.show()
+
     def run(self):
         line = 0
         self.add_cmd_out_signal.emit(f"开始")
+        running_import = False
         while True:
+            if line == -1:
+                break
+            if line == -2:
+                self.add_cmd_out_signal.emit(f"ERROR [未知TAG]")
+                break
             if self.closed:
                 break
             try:
@@ -193,6 +235,18 @@ class ScriptRunner(QMainWindow):
             except:
                 break
             try:
+                if running_import:
+                    if (
+                        self.import_script_runner and self.import_script_runner.end
+                    ):
+                        self.cmd_out_list += self.import_script_runner.cmd_out_list[
+                            1:-1
+                        ]
+                        self.update_cmd_out_signal.emit()
+                        self.close_import_script_runner_signal.emit()
+                        self.import_script_runner = None
+                        running_import = False
+                    continue
                 if cmd.startswith("#"):
                     line += 1
                     continue
@@ -203,21 +257,20 @@ class ScriptRunner(QMainWindow):
                     line += 1
                     continue
                 args = cmd.split(" ")
-                if args[0] == "FIND_IMAGE":
+                if args[0] == "IMPORT":
+                    running_import = True
+                    self.import_script_signal.emit(args[1])
+                elif args[0] == "START":
+                    self.start_app(args[1])
+                    self.add_cmd_out_signal.emit(f"INFO {line}:{cmd} [启动{args[1]}]")
+                elif args[0] == "FIND_IMAGE":
                     pos = self.find_image(args[1])
-                    try:
-                        yes = self.get_tag(args[3], line)
-                    except Exception as err:
-                        yes = None
-                    try:
-                        no = self.get_tag(args[4], line)
-                    except Exception as err:
-                        no = None
                     if pos is None:
                         try:
+                            ord_line = line
                             line = self.get_tag(args[4], line)
                             self.add_cmd_out_signal.emit(
-                                f"INFO {line}:{cmd} [跳转{line}]"
+                                f"INFO {ord_line}:{cmd} [跳转{line}]"
                             )
                         except:
                             self.add_cmd_out_signal.emit(
@@ -230,8 +283,9 @@ class ScriptRunner(QMainWindow):
                         f"INFO {line}:{cmd} [找到图片({pos[0]},{pos[1]})]"
                     )
                     try:
+                        ord_line = line
                         line = self.get_tag(args[3], line)
-                        self.add_cmd_out_signal.emit(f"INFO {line}:{cmd} [跳转{line}]")
+                        self.add_cmd_out_signal.emit(f"INFO {ord_line}:{cmd} [跳转{line}]")
                     except:
                         pass
                 elif args[0] == "CLICK":
@@ -252,7 +306,7 @@ class ScriptRunner(QMainWindow):
                     y1 = random_xy(y1)
                     x2 = random_xy(x2)
                     y2 = random_xy(y2)
-                    run_cmd(self.make_cmd(f"shell input swipe {x1} {y1} {x2} {y2}"))
+                    run_cmd(self.make_cmd(f"shell input swipe {x1} {y1} {x2} {y2} {random.randint(5,9)}00"))
                     self.add_cmd_out_signal.emit(
                         f"INFO {line}:{cmd} [滑动坐标({x1},{y1})到({x2},{y2})]"
                     )
@@ -262,7 +316,9 @@ class ScriptRunner(QMainWindow):
                         value = self.variable[args[1]]
                     self.add_cmd_out_signal.emit(f"{args[0]} {value}")
                 elif args[0] == "GO":
+                    ord_line = line
                     line = self.get_tag(args[1], line)
+                    self.add_cmd_out_signal.emit(f"INFO {ord_line}:{cmd} [跳转{line}]")
                 elif args[0] == "SET":
                     if args[1] == "VAR":
                         self.variable[args[2]] = float(args[3])
@@ -316,7 +372,9 @@ class ScriptRunner(QMainWindow):
                             self.variable[args[5]] = value1 * value2
                         elif args[3] == "/":
                             self.variable[args[5]] = value1 / value2
-
+                        self.add_cmd_out_signal.emit(
+                            f"INFO {line}:{cmd} [计算结果{self.variable[args[5]]}]"
+                        )
                     elif args[1] == "XY":
                         xy = [self.variable[args[2]][0], self.variable[args[2]][1]]
                         if args[3] == "x":
@@ -362,6 +420,7 @@ class ScriptRunner(QMainWindow):
                 break
             line += 1
         self.add_cmd_out_signal.emit(f"结束")
+        self.end = True
 
 
 # 创建一个主窗口类，继承自 QMainWindow
@@ -478,15 +537,14 @@ class CutImageWindow(QMainWindow):
         self.setWindowTitle("截图")  # 设置窗口标题
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
-        self.image = QPixmap(f"{dir}/temp/image{id}.png")
+        self.show_image = ImageView(f"{dir}/temp/image{id}.png")
         os.remove(f"{dir}/temp/image{id}.png")
-        self.show_image = QLabel()
-        self.show_image.setPixmap(self.image)
-        self.show_image.setFixedSize(self.image.size())
+        # self.show_image.setPixmap(self.image)
+        # self.show_image.setFixedSize(self.image.size())
         v_box = QGridLayout()
         central_widget.setLayout(v_box)
         self.cut_box = Drawing()
-        self.cut_box.setFixedSize(self.image.size())
+        self.cut_box.setFixedSize(self.show_image.image.size())
         v_box.addWidget(self.show_image, 0, 0)
         v_box.addWidget(self.cut_box, 0, 0)
         self.cut_box.raise_()
@@ -498,14 +556,14 @@ class CutImageWindow(QMainWindow):
         x, y, w, h = self.cut_box.rect
         rect = QRect(x, y, w, h)
         if (
-            rect.x() + rect.width() > self.image.width()
-            or rect.y() + rect.height() > self.image.height()
+            rect.x() + rect.width() > self.show_image.image.width()
+            or rect.y() + rect.height() > self.show_image.image.height()
         ):
             print("错误：截取区域超出图像范围")
             return
 
         # 截取子图像
-        cropped_pixmap = self.image.copy(rect)
+        cropped_pixmap = self.show_image.image.copy(rect)
 
         # 保存截图（示例路径）
         if not os.path.exists(self.dir + "/images"):
@@ -521,17 +579,23 @@ class CutImageWindow(QMainWindow):
 
 
 class ScriptEditoImagesWidgetItem(QListWidgetItem):
-    def __init__(self, text, parent=None):
+    def __init__(self, text, dir, parent=None):
         super().__init__(parent)
         self.setText(text)
         self.widget = QWidget()
         self.layout = QHBoxLayout(self.widget)
         self.layout.setContentsMargins(0, 0, 0, 0)
-        name = QLabel(text)
+        image = ImageView(f"{dir}/images/{text}")
+        image.setSize(100, 100)
+        self.name = QLineEdit(text)
+        self.name.setFixedSize(QSize(80, 20))
+        self.change_name_button = QPushButton("修改名称")
         self.click_button = QPushButton("点击图片")
         self.add_button = QPushButton("寻找图片")
         self.delete_button = QPushButton("删除图片")
-        self.layout.addWidget(name)
+        self.layout.addWidget(image)
+        self.layout.addWidget(self.name)
+        self.layout.addWidget(self.change_name_button)
         self.layout.addWidget(self.add_button)
         self.layout.addWidget(self.click_button)
         self.layout.addWidget(self.delete_button)
@@ -540,7 +604,7 @@ class ScriptEditoImagesWidgetItem(QListWidgetItem):
 class ScriptEditorWindow(QMainWindow):
     def __init__(self, dir):
         super().__init__()  # 调用父类 QMainWindow 的初始化方法
-        self.resize(800, 600)  # 设置窗口大小
+        self.resize(1200, 600)  # 设置窗口大小
         self.setWindowTitle("编辑")
         self.dir = dir
         self.file = dir + "/index.txt"
@@ -611,6 +675,7 @@ class ScriptEditorWindow(QMainWindow):
         # 编辑器
         self.editor = QTextEdit()
         self.editor.setText(self.content)
+        self.editor.setFixedSize(QSize(600, 600))
         h_box.addWidget(self.editor)
         self.editor.setStyleSheet("QTextEdit { width: 500px; }")
         add_image_button.clicked.connect(self.on_click_add_image)
@@ -647,29 +712,38 @@ class ScriptEditorWindow(QMainWindow):
         self.get_xy_window.getted.connect(self.on_getted)
         self.get_xy_window.show()
 
-    def on_click_image_list_add_image(self, file_name):
-        name = file_name.replace(".png", "")
-
+    def on_click_image_list_add_image(self, item):
         def func():
+            file_name = item.text()
+            name = file_name.replace(".png", "")
             self.editor.setText(
                 self.editor.toPlainText() + f"\nFIND_IMAGE {file_name} {name}"
             )
 
         return func
 
-    def on_click_image_list_delete_image(self, name):
+    def on_click_image_list_delete_image(self, item):
         def func():
-            path = self.dir + "/images/" + name
+            path = self.dir + "/images/" + item.text()
             os.remove(path)
             self.update_image_list()
 
         return func
 
-    def on_click_image_list_click_image(self, file_name):
-        name = file_name.replace(".png", "")
-
+    def on_click_image_list_click_image(self, item):
         def func():
+            file_name = item.text()
+            name = file_name.replace(".png", "")
             self.editor.setText(self.editor.toPlainText() + f"\nCLICK {name}")
+
+        return func
+
+    def on_click_change_name(self, item):
+        def func():
+            path = self.dir + "/images/" + item.text()
+            new = self.dir + "/images/" + item.name.text()
+            item.setText(item.name.text())
+            os.rename(path, new)
 
         return func
 
@@ -677,17 +751,18 @@ class ScriptEditorWindow(QMainWindow):
         try:
             self.image_list.clear()
             for item in [
-                ScriptEditoImagesWidgetItem(name)
+                ScriptEditoImagesWidgetItem(name, self.dir)
                 for name in os.listdir(self.dir + "/images") or []
             ]:
+                item.change_name_button.clicked.connect(self.on_click_change_name(item))
                 item.click_button.clicked.connect(
-                    self.on_click_image_list_click_image(item.text())
+                    self.on_click_image_list_click_image(item)
                 )
                 item.add_button.clicked.connect(
-                    self.on_click_image_list_add_image(item.text())
+                    self.on_click_image_list_add_image(item)
                 )
                 item.delete_button.clicked.connect(
-                    self.on_click_image_list_delete_image(item.text())
+                    self.on_click_image_list_delete_image(item)
                 )
                 self.image_list.addItem(item)
                 self.image_list.setItemWidget(item, item.widget)
@@ -696,7 +771,7 @@ class ScriptEditorWindow(QMainWindow):
 
 
 class ScriptRunChooseDevice(QMainWindow):
-    def __init__(self, dir,name):
+    def __init__(self, dir, name):
         self.name = name
         self.sr = None
         super().__init__()
@@ -722,7 +797,7 @@ class ScriptRunChooseDevice(QMainWindow):
         self.setCentralWidget(self.device_list)
 
     def on_click_device_list(self, item):
-        self.sr = ScriptRunner(self.dir, item.text(),self.name)
+        self.sr = ScriptRunner(self.dir, item.text(), self.name)
         self.sr.on_close.connect(self.on_sr_close)
         self.close()
         self.sr.show()
@@ -766,7 +841,7 @@ class ScriptListWidgetItem(QListWidgetItem):
 
     def on_click_run(self):
         dir = f"scripts/{self.text()}"
-        srcd = ScriptRunChooseDevice(dir,self.text())
+        srcd = ScriptRunChooseDevice(dir, self.text())
         srcd.on_sr_close = self.on_srcd_close(srcd)
         srcd.show()
         self.srcds.append(srcd)
@@ -774,6 +849,7 @@ class ScriptListWidgetItem(QListWidgetItem):
     def on_click_delete(self):
         dir = f"scripts/{self.text()}"
         shutil.rmtree(dir)
+        time.sleep(1)
         self.update_script_list()
 
     def on_click_edit(self):

@@ -9,6 +9,10 @@ easy-click的脚本为一个简单的指令集，每个指令之间以换行分�
 [arg] 为必填参数
 (arg)为可选参数
 ```
+# 启动app
+START [包名]
+# 调用其他脚本
+IMPORT [脚本名 如：script1]
 # 回到主页
 HOME
 # 返回

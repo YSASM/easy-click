@@ -1,69 +1,77 @@
 WARN 注意！脚本使用mumu模拟器编写，模拟器分辨率为1280x720，请确保分辨率正确
+IMPORT 前往探索页面
+FIND_IMAGE tupo.png tupo
+CLICK tupo
+WAIT 2
+FIND_IMAGE yyl1.png yyl1
+CLICK yyl1
+WAIT 2
+
 # 检查再哪个页面
 TAG START
 SET VAR count 10
 # 需要点击进攻页面
-FIND_IMAGE image1.png image1 FIGHT CONTINU
+FIND_IMAGE fight.png fight FIGHT CONTINU
 # 成功页面
-FIND_IMAGE image2.png image2 SUCCESS CONTINU
+FIND_IMAGE success.png success SUCCESS CONTINU
 # 失败页面
-FIND_IMAGE image4.png image4 FAILD CONTINU
+FIND_IMAGE faild.png faild FAILD CONTINU
 # 等待开始
-FIND_IMAGE image0.png image0 CHECK_TIMES SWIPE_CHECK
+FIND_IMAGE card.png card CHECK_TIMES SWIPE_CHECK
 
 TAG CHECK_TIMES
 # 看还有没有次数
-FIND_IMAGE image3.png image3 HASNOT_TIMES CONTINU
-FIND_IMAGE image0.png image0
-CLICK image0
+FIND_IMAGE hasnottimes.png hasnottimes HASNOT_TIMES CONTINU
+FIND_IMAGE card.png card
+CLICK card
 WAIT 2
-FIND_IMAGE image1.png image1 CONTINU FLASH
+FIND_IMAGE fight.png fight CONTINU FLASH
 TAG FIGHT
-CLICK image1
+CLICK fight
 
 
 TAG WAIT
 WAIT 2
 # 如果还在刚才页面
-FIND_IMAGE image1.png image1 FLASH CONTINU 
-FIND_IMAGE image4.png image4 FAILD CONTINU
-FIND_IMAGE image2.png image2 SUCCESS WAIT
+FIND_IMAGE fight.png fight FLASH CONTINU 
+FIND_IMAGE faild.png faild FAILD CONTINU
+FIND_IMAGE success.png success SUCCESS WAIT
 
 TAG FLASH
 # 刷新寮突
 LOG 刷新寮突
-FIND_IMAGE image9.png image9
-CLICK image9
+FIND_IMAGE yyl2.png yyl2
+CLICK yyl2
 WAIT 2
-FIND_IMAGE image6.png image6
-CLICK image6
+FIND_IMAGE close.png close
+CLICK close
 WAIT 2
-FIND_IMAGE image7.png image7
-CLICK image7
+FIND_IMAGE tupo.png tupo
+CLICK tupo
 WAIT 2
-FIND_IMAGE image8.png image8
-CLICK image8
+FIND_IMAGE yyl1.png yyl1
+CLICK yyl1
 WAIT 2
 GO START
 
 TAG SUCCESS
 WAIT 3
-CLICK image2
+CLICK success
 WAIT 3
 GO START
 
 TAG FAILD
 WAIT 3
-CLICK image4
+CLICK faild
 WAIT 3
 GO START
 
 TAG SWIPE_CHECK
-FIND_IMAGE image5.png image5 CONTINU PAGE_ERROR
-CALC XY image5 y + 35 pos1
-SWIP image5 pos1
+FIND_IMAGE bar.png bar CONTINU PAGE_ERROR
+CALC XY bar y + 35 pos1
+SWIP bar pos1
 WAIT 3
-FIND_IMAGE image0.png image0 CHECK_TIMES CONTINU
+FIND_IMAGE card.png card CHECK_TIMES CONTINU
 CALC VAR count + 1 count
 IF count > 20 HASNOT_ITEM SWIPE_CHECK
 
