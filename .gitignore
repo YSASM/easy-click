@@ -10,3 +10,4 @@ build/
 main.spec
 connect_adb.spec
 scripts/
+*.log
