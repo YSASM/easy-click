@@ -1,16 +1,16 @@
 import random
-import uiautomator2
+import uiautomator2 as u2
 from . import BaseControl
 
 
 class Uiautomator2(BaseControl):
-    def __init__(self, address):
-        self.d: uiautomator2.Device = None
+    def __init__(self, address:str):
+        self.d: u2.Device = None
         super().__init__(address)
 
     def connect(self):
         try:
-            self.d = uiautomator2.connect(self.address)
+            self.d = u2.connect(self.address)
             return True
         except:
             return False
@@ -28,7 +28,7 @@ class Uiautomator2(BaseControl):
     def swiper(self, xy1, xy2):
         fx, fy = xy1
         tx, ty = xy2
-        self.d.swipe(fx, fy, tx, ty, random(5, 10) * 100)
+        self.d.swipe(fx, fy, tx, ty, random.randint(5, 10) * 100)
         return super().swiper(xy1, xy2)
     
     def screenshot(self):

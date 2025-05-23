@@ -40,11 +40,11 @@ class Adb(BaseControl):
         return super().swiper(xy1, xy2)
 
     def screenshot(self):
-        id = uuid.uuid4()
+        uid = uuid.uuid4()
         run_cmd(self.make_cmd("shell screencap -p /sdcard/screenshot.png"))
-        run_cmd(self.make_cmd(f"pull /sdcard/screenshot.png temp/image{id}.png"))
-        image = Image.open(f"temp/image{id}.png")
-        os.remove(f"temp/image{id}.png")
+        run_cmd(self.make_cmd(f"pull /sdcard/screenshot.png temp/image{uid}.png"))
+        image = Image.open(f"temp/image{uid}.png")
+        os.remove(f"temp/image{uid}.png")
         return self.pillow_to_cv2(image)
 
     def make_cmd(self, cmd):

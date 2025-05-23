@@ -5,7 +5,7 @@ import time
 from PIL import Image
 import cv2
 
-from src.utils import BaseControl, Bean, random_time, random_xy
+from src.utils import BaseControl, Bean, random_xy
 from src.utils.adb import Adb
 from src.utils.uiautomator2 import Uiautomator2
 
@@ -73,15 +73,15 @@ class Vm(Thread):
         return True
 
     def wait_image(self, name, time_out=5):
-        start_time = int(time.time())
+        count = 0
         while True:
             res = self.find_image(name)
             if res is not None:
                 return res
             emd_time = int(time.time())
-            t = emd_time - start_time
-            if t >= time_out:
+            if count > time_out:
                 return None
+            count += 1
 
     def back(self):
         self.adb.cmd("shell input keyevent 4")
@@ -116,10 +116,6 @@ class Vm(Thread):
             return True
         except ValueError:
             return False
-
-    def close_import_script_runner(self):
-        if self.import_script_runner is not None:
-            self.import_script_runner.close()
 
     def import_script(self, name):
         try:

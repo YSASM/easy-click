@@ -1,34 +1,20 @@
-import json
 import os
-import random
-import re
 import shutil
-import subprocess
 from threading import Thread
 import time
 from PySide6.QtWidgets import (
     QListWidget,
-    QMainWindow,
     QWidget,
     QVBoxLayout,
     QPushButton,
     QHBoxLayout,
     QLineEdit,
-    QListWidgetItem,
     QLabel,
     QTextEdit,
-    QGridLayout,
-    QMessageBox,
 )
-from PySide6.QtCore import Signal, QRect, Qt, QSize
-from PySide6.QtGui import QPixmap, QPainter, QPen, qRgb, QTextCharFormat, QTextCursor
-from PIL import Image
-import cv2
-import numpy as np
-import uuid
+from PySide6.QtCore import Signal
 
-from src.utils import Bean, check_adb, random_time, random_xy, run_cmd
-from src.utils.scrcpy import Scrcpy
+from src.utils import Bean, check_adb, run_cmd
 from src.widgets.listItem import ListItem
 from src.widgets.page import Page
 from src.windows.chooseDevice import ChooseDevice
@@ -99,13 +85,14 @@ class ScriptListWidgetItem(ListItem):
         try:
             cd = ChooseDevice()
             self.page.open_page(cd)
-            cd.on_choosed.connect(self.on_changed_device)
+            cd.on_closed.connect(self.on_changed_device)
+            return None
         except Exception as e:
             HomeWindow.add_cmd_out(self, str(e))
+            return None
 
     def on_click_delete(self):
-        dir = f"scripts/{self.text()}"
-        shutil.rmtree(dir)
+        shutil.rmtree(f"scripts/{self.text()}")
         time.sleep(1)
         self.update_script_list()
 
@@ -113,7 +100,7 @@ class ScriptListWidgetItem(ListItem):
         editor_window = ScriptEditorWindow(f"scripts/{self.text()}")
         self.page.open_page(editor_window)
 
-    def update_script_list():
+    def update_script_list(self):
         pass
 
 
@@ -127,6 +114,7 @@ class HomeWindow(Page):
 
     def __init__(self):
         super().__init__()  # 调用父类 QMainWindow 的初始化方法
+        self.reflash_thread = None
         self.resize(800, 600)  # 设置窗口大小
         self.setWindowTitle("easy click")  # 设置窗口标题
         central_widget = QWidget(self)
@@ -197,8 +185,7 @@ class HomeWindow(Page):
             time.sleep(1)
 
     def start_reflash_cmd_out(self):
-        self.reflash_thread = Thread(target=self.reflash_cmd_out)
-        self.reflash_thread.setDaemon(True)
+        self.reflash_thread = Thread(target=self.reflash_cmd_out,daemon=True)
         self.reflash_thread.start()
 
     def on_click_add_script(self):

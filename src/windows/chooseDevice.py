@@ -7,7 +7,7 @@ from src.widgets.page import Page
 
 
 class ChooseDevice(Page):
-    on_choosed = Signal(str)
+    on_closed = Signal(str)
     def __init__(self):
         super().__init__()
         self.resize(800, 600)
@@ -22,5 +22,5 @@ class ChooseDevice(Page):
         self.setCentralWidget(self.device_list)
 
     def on_click_device_list(self, item):
-        self.on_choosed.emit(item.text())
+        self.on_closed.emit(item.text())
         self.close()
