@@ -1,0 +1,14 @@
+.venv
+.vscode
+__pycache__/
+*.pyc
+main.exe
+connect_adb.exe
+build_src/
+dist/
+build/
+main.spec
+connect_adb.spec
+scripts/
+*.log
+.git.bak
