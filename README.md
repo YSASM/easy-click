@@ -25,6 +25,10 @@ TAG [标签名]
 GO [标签名]
 # 匹配图片
 FIND_IMAGE [图片地址，如：image0.png] [存放坐标的变量名，如：image0] (如果匹配到跳转的标签名) (如果匹配不到跳转的标签名)
+WAIT_IMAGE [图片地址，如：image0.png] [存放坐标的变量名，如：image0] (如果匹配到跳转的标签名) (如果匹配不到跳转的标签名) (循环次数:一秒钟匹配一次)
+HAS_IMAGE [图片地址，如：image0.png] [图片地址，如：image1.png] ...  | (如果匹配到跳转的标签名) (如果匹配不到跳转的标签名)
+
+# HAS_IMAGE可以同时匹配多个图片 HAS_IMAGE 后将需要匹配的图片一个个列出来 后面接 | 符号， | 符号后面接是否两个标签名
 
 # 点击
 CLICK [坐标变量名，如：image0]
@@ -50,13 +54,25 @@ SET XY [变量名] [X数值] [Y数值]
 CALC XY [变量名] [x/y] [运算符] [变量名/数值] [保存到变量名]
 CALC VAR [变量名/数值] [运算符] [变量名/数值] [保存到变量名]
 
+# 随机数
+RANDOM [开始范围] [结束范围] [保存到变量名]
+
 # 条件判断
 IF [变量名/数值] [条件判断符] [变量名/数值] [条件成立跳转标签] [条件不成立跳转标签]
+```
 
+## 标签语法糖
+```
+CLICK CONTINU END
+# 接在条件判定后面,比如下方，实现了一个循环等待image0
+TAG LOOP
+FIND_IMAGE image0.png image0 CLICK LOOP
 
-FIND_IMAGE和IF跳转标签有两个保留字段 CONTINU 和 END
-CONTINU 表示继续执行后续指令
-END 表示结束脚本
+# 假如需要等待几秒再点击
+TAG LOOP
+FIND_IMAGE image0.png image0 CONTINU LOOP
+WAIT 3
+CLICK image0
 ```
 
 ## 示例

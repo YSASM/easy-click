@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal
 
-from src.utils import Bean, check_adb, run_cmd
+from src.utils import Bean
 from src.utils.adb import Adb
 from src.widgets.listItem import ListItem
 from src.widgets.page import Page
@@ -92,7 +92,7 @@ class ScriptListWidgetItem(ListItem):
             Bean.cmd_out_list.append(str(e))
 
     def on_click_run(self):
-        check_adb()
+        Adb.check_adb()
         if len(Bean.adb_devices) == 0:
             return HomeWindow.add_cmd_out(self, "没有设备")
         try:
@@ -173,8 +173,11 @@ class HomeWindow(Page):
         self.input_address = QLineEdit("127.0.0.1:7555")
         connect_adb_box.addWidget(self.input_address)
         connect_adb_button = QPushButton("连接")
+        restart_adb_button = QPushButton("重启ADB")
         connect_adb_box.addWidget(connect_adb_button)
+        connect_adb_box.addWidget(restart_adb_button)
         connect_adb_button.clicked.connect(self.connect_adb)
+        restart_adb_button.clicked.connect(self.restart_adb)
         add_script.clicked.connect(self.on_click_add_script)
         after_run_close_script_switch.changed.connect(
             self.on_after_run_close_script_switch_change
@@ -225,7 +228,7 @@ class HomeWindow(Page):
 
         self.update_cmd_out_signal.connect(self.update_cmd_out)
         self.start_reflash_cmd_out()
-        check_adb()
+        Adb.check_adb()
 
     def on_after_run_close_script_switch_change(self, value):
         self.after_run_close_script = value
@@ -237,7 +240,7 @@ class HomeWindow(Page):
         for device in self.default_devices:
             Adb(device).connect()
 
-        check_adb()
+        Adb.check_adb()
 
     def save_defalut_devices(self):
         with open("default_devices.txt", "w+", encoding="utf-8") as f:
@@ -249,9 +252,14 @@ class HomeWindow(Page):
             msg.setText("保存成功")
             msg.exec_()
 
+    def restart_adb(self):
+        Adb.kill()
+        Adb.start()
+        self.add_cmd_out(self,"重启成功")
+
     def connect_adb(self):
         Adb(self.input_address.text()).connect()
-        check_adb()
+        Adb.check_adb()
 
     def clear_cmd_out(self):
         Bean.cmd_out_list.clear()

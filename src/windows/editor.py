@@ -1,30 +1,26 @@
 import os
-
-import time
 from PySide6.QtWidgets import (
     QListWidget,
-    QMainWindow,
     QWidget,
     QVBoxLayout,
     QPushButton,
     QHBoxLayout,
     QLineEdit,
-    QListWidgetItem,
     QLabel,
     QTextEdit,
     QGridLayout,
     QMessageBox,
 )
 from PySide6.QtCore import Signal, QRect, Qt, QSize
-from PySide6.QtGui import QPixmap, QPainter, QPen, qRgb, QTextCharFormat, QTextCursor
+from PySide6.QtGui import QPainter, QPen, qRgb, QTextCharFormat, QTextCursor
 
-from src.utils import Bean, check_adb, run_cmd
+from src.utils import Bean
+from src.utils.adb import Adb
 from src.utils.uiautomator2Manger import Uiautomator2
 from src.widgets.label import Label
 from src.widgets.image import Image as ImageView
 from src.widgets.listItem import ListItem
 from src.widgets.page import Page
-from src.windows.chooseDevice import ChooseDevice
 from src.windows.scriptRunner import ScriptRunner
 
 RED = qRgb(255, 0, 0)
@@ -232,7 +228,7 @@ class ScriptEditorWindow(Page):
         # CLICK argname | 点击 argname
         # SEND_TEXT "ssdasda" | 输入 XXX
         # WAIT 3 | 等待 3 秒
-        check_adb()
+        Adb.check_adb()
         adb_label = QLabel("设备")
         self.adb_address = QLineEdit(
             Bean.adb_devices[0] if len(Bean.adb_devices) > 0 else ""
@@ -315,7 +311,7 @@ class ScriptEditorWindow(Page):
         with open(self.file, "w+", encoding="utf-8") as f:
             self.content = self.editor.toPlainText()
             f.write(self.content)
-        sr = ScriptRunner(self.adb_address.text(), self.name)
+        sr = ScriptRunner(self.adb_address.text(), self.name, False)
         self.open_page(sr)
         sr.start()
 

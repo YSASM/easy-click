@@ -25,10 +25,12 @@ class Uiautomator2(BaseControl):
         self.d.click(x, y)
         return super().click(xy)
 
-    def swiper(self, xy1, xy2):
+    def swiper(self, xy1, xy2, duration):
         fx, fy = xy1
         tx, ty = xy2
-        duration = random.randint(0,1) + random.randint(5,9) / 10
+        if duration is None:
+            duration = str(random.uniform(1, 3)).split(".")
+            duration = float(duration[0]) + float(duration[1][0:2]) / 100
         self.d.swipe(fx, fy, tx, ty, duration)
         return super().swiper(xy1, xy2)
 

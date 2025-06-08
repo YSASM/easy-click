@@ -1,4 +1,5 @@
 import os
+import random
 import re
 from threading import Thread
 import time
@@ -9,7 +10,7 @@ from src.utils import BaseControl, Bean, random_xy
 from src.utils.adb import Adb
 from pathlib import Path
 import shutil
-from src.utils.uiautomator2Manger import Uiautomator2,u2
+from src.utils.uiautomator2Manger import Uiautomator2, u2
 
 
 class Vm(Thread):
@@ -20,19 +21,19 @@ class Vm(Thread):
         self.killed = False
         self.variable = {}
         self.end = False
-        assets = os.path.join(Path(u2.__file__).parent,"assets")
+        assets = os.path.join(Path(u2.__file__).parent, "assets")
         if not os.path.exists(assets):
-            shutil.copytree("lib/uiautomator2",assets)
+            shutil.copytree("lib/uiautomator2", assets)
         else:
             if os.listdir(assets) != os.listdir("lib/uiautomator2"):
                 shutil.rmtree(assets)
-                shutil.copytree("lib/uiautomator2",assets)
+                shutil.copytree("lib/uiautomator2", assets)
         self.control = Uiautomator2(address)
         err = self.control.connect()
-        if err is not None :
+        if err is not None:
             self.add_cmd_out(str(err))
             raise Exception(f"链接失败{str(err)}")
-        
+
         self.add_cmd_out(f"INFO {self.control.d.info}")
         self.adb = Adb(address)
         self.address = address
@@ -92,9 +93,9 @@ class Vm(Thread):
             res = self.find_image(name)
             if res is not None:
                 return res
-            emd_time = int(time.time())
             if count > time_out:
                 return None
+            time.sleep(1)
             count += 1
 
     def back(self):
@@ -115,7 +116,7 @@ class Vm(Thread):
             return line
         if tag == "END":
             return -2
-        if tag == "CLICK":
+        if tag == "CLICK" and pos is not None:
             x, y = pos
             x = random_xy(x)
             y = random_xy(y)
@@ -150,7 +151,7 @@ class Vm(Thread):
             return None
 
     def run(self):
-        script_name = self.dir.replace("/","\\").split("\\")[-1]
+        script_name = self.dir.replace("/", "\\").split("\\")[-1]
         self.end = False
         line = 0
         self.add_cmd_out(f"LOG 开始{script_name}")
@@ -184,8 +185,11 @@ class Vm(Thread):
                     # HAS_IMAGE xx xx xx t1 t2
                     names = []
                     tags = []
+                    flage = False
                     for arg in args[1:]:
-                        if ".png" in arg:
+                        if arg == "|":
+                            flage = True
+                        if not flage:
                             names.append(arg)
                         else:
                             tags.append(arg)
@@ -198,18 +202,11 @@ class Vm(Thread):
                 elif cmd_name == "WAIT_IMAGE":
                     # WAIT_IMAGE xxx xxx t1 t2
                     # WAIT_IMAGE 5 xxx xxx t1 t2
-                    if self.is_num(self.getArg(args, 1)):
-                        time_out = float(self.getArg(args, 1))
-                        name = self.getArg(args, 2)
-                        var = self.getArg(args, 3)
-                        yes = self.getArg(args, 4)
-                        no = self.getArg(args, 5)
-                    else:
-                        time_out = 5
-                        name = self.getArg(args, 1)
-                        var = self.getArg(args, 2)
-                        yes = self.getArg(args, 3)
-                        no = self.getArg(args, 4)
+                    name = self.getArg(args, 1)
+                    var = self.getArg(args, 2)
+                    yes = self.getArg(args, 3)
+                    no = self.getArg(args, 4)
+                    time_out = self.getArg(args, 5) or 5
 
                     pos = self.wait_image(name, time_out)
                     if pos:
@@ -260,12 +257,19 @@ class Vm(Thread):
                 elif args[0] == "SWIP":
                     x1, y1 = self.variable[args[1]]
                     x2, y2 = self.variable[args[2]]
+                    duration = self.getArg(args, 3)
                     x1 = random_xy(x1)
                     y1 = random_xy(y1)
                     x2 = random_xy(x2)
                     y2 = random_xy(y2)
+                    if duration is not None:
+                        duration = (
+                            float(duration)
+                            if self.is_num(duration)
+                            else self.variable[duration]
+                        )
                     try:
-                        self.control.swiper([x1, y1], [x2, y2])
+                        self.control.swiper([x1, y1], [x2, y2], duration)
                     except Exception as e:
                         pass
                     self.add_cmd_out(
@@ -281,9 +285,24 @@ class Vm(Thread):
                     self.add_cmd_out(f"INFO {line}:{' '.join(args)} [跳转{line}]")
                 elif args[0] == "SET":
                     if args[1] == "VAR":
-                        self.variable[args[2]] = float(args[3])
+                        self.variable[args[2]] = (
+                            float(args[3])
+                            if self.is_num(args[3])
+                            else self.variable[args[3]]
+                        )
                     elif args[1] == "XY":
-                        self.variable[args[2]] = [float(args[3]), float(args[4])]
+                        self.variable[args[2]] = [
+                            (
+                                float(args[3])
+                                if self.is_num(args[3])
+                                else self.variable[args[3]]
+                            ),
+                            (
+                                float(args[4])
+                                if self.is_num(args[4])
+                                else self.variable[args[4]]
+                            ),
+                        ]
                 elif args[0] == "IF":
                     value1 = (
                         float(args[1])
@@ -361,6 +380,16 @@ class Vm(Thread):
                             xy[i] /= value2
                         self.variable[args[6]] = xy
                         self.add_cmd_out(f"INFO {line}:{' '.join(args)} [计算结果{xy}]")
+                elif args[0] == "RANDOM":
+                    start = float(self.getArg(args, 1))
+                    end = float(self.getArg(args, 2))
+                    name = self.getArg(args, 3)
+                    value = str(random.uniform(start, end)).split(".")
+                    value = float(value[0]) + float(value[1][0:2]) / 100
+                    self.variable[name] = value
+                    self.add_cmd_out(
+                        f"INFO {line}:{' '.join(args)} [随机结果{self.variable[name]}]"
+                    )
                 elif args[0] == "BACK":
                     self.back()
                     self.add_cmd_out(f"INFO {line}:{' '.join(args)} [返回]")
@@ -368,13 +397,19 @@ class Vm(Thread):
                     self.home()
                     self.add_cmd_out(f"INFO {line}:{' '.join(args)} [回到主页]")
                 elif args[0] == "WAIT":
-                    s_t = float(args[1])
+                    s_t = (
+                        float(args[1])
+                        if self.is_num(args[1])
+                        else self.variable[args[1]]
+                    )
                     self.add_cmd_out(f"INFO {line}:{' '.join(args)} [等待{s_t}秒]")
                     time.sleep(s_t)
                 elif args[0] == "END":
                     break
             except Exception as e:
-                self.add_cmd_out(f"ERROR {line}:{' '.join(args)} [{traceback.format_exc()}]")
+                self.add_cmd_out(
+                    f"ERROR {line}:{' '.join(args)} [{traceback.format_exc()}]"
+                )
                 Bean.cmd_out_list.append(str(e))
                 break
             line += 1
