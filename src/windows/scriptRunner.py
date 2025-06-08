@@ -16,7 +16,9 @@ from src.widgets.page import Page
 
 class ScriptRunner(Page):
     update_cmd_out_signal = Signal()
-    def __init__(self, address, name, *args, **kwargs):
+    close_self = Signal()
+
+    def __init__(self, address, name, after_run_close_script, *args, **kwargs):
         self.dir = f"scripts/{name}"
         self.address = address
         super().__init__(*args, **kwargs)
@@ -29,11 +31,16 @@ class ScriptRunner(Page):
         with open(f"{self.dir}/index.txt", "r+", encoding="utf-8") as f:
             self.script = f.read().split("\n")
         self.update_cmd_out_signal.connect(self.update_cmd_out)
-        
+        self.after_run_close_script = after_run_close_script
+        self.close_self.connect(self.close)
+
     def start(self):
-        self.th = Vm(self, self.dir, self.address, self.script)
-        self.add_vm_task(self.th)
-        
+        try:
+            self.th = Vm(self, self.dir, self.address, self.script)
+            self.add_vm_task(self.th)
+        except:
+            if self.after_run_close_script:
+                self.close()
 
     def set_cmd_out_color(self):
         cursor = self.cmd_out.textCursor()
@@ -69,5 +76,3 @@ class ScriptRunner(Page):
     def closeEvent(self, event):
         self.th.kill()
         return super().closeEvent(event)
-
-

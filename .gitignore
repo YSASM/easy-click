@@ -12,3 +12,4 @@ connect_adb.spec
 scripts/
 *.log
 .git.bak
+default_devices.txt

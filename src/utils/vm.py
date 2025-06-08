@@ -22,8 +22,11 @@ class Vm(Thread):
         self.end = False
         assets = os.path.join(Path(u2.__file__).parent,"assets")
         if not os.path.exists(assets):
-            self.add_cmd_out(f"ERROR [{assets}]不存在")
             shutil.copytree("lib/uiautomator2",assets)
+        else:
+            if os.listdir(assets) != os.listdir("lib/uiautomator2"):
+                shutil.rmtree(assets)
+                shutil.copytree("lib/uiautomator2",assets)
         self.control = Uiautomator2(address)
         err = self.control.connect()
         if err is not None :
@@ -147,9 +150,10 @@ class Vm(Thread):
             return None
 
     def run(self):
+        script_name = self.dir.replace("/","\\").split("\\")[-1]
         self.end = False
         line = 0
-        self.add_cmd_out(f"LOG 开始{self.name}")
+        self.add_cmd_out(f"LOG 开始{script_name}")
         while True:
             if line == -1:
                 break
@@ -375,4 +379,6 @@ class Vm(Thread):
                 break
             line += 1
         self.end = True
-        self.add_cmd_out(f"LOG 结束{self.name}")
+        self.add_cmd_out(f"LOG 结束{script_name}")
+        if self.page.after_run_close_script:
+            self.page.close_self.emit()

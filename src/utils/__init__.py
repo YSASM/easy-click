@@ -20,7 +20,7 @@ def run_cmd(command):
         output = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)
         return output.decode().encode("utf-8").decode("utf-8")
     except subprocess.CalledProcessError as e:
-        return e.output.decode().encode("utf-8").decode("utf-8")
+        return str(e)
 
 
 def check_adb():
