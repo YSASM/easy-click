@@ -8,9 +8,7 @@ import cv2
 import traceback
 from src.utils import BaseControl, Bean, random_xy
 from src.utils.adb import Adb
-from pathlib import Path
-import shutil
-from src.utils.uiautomator2Manger import Uiautomator2, u2
+from src.utils.uiautomator2Manger import Uiautomator2
 
 
 class Vm(Thread):
@@ -21,13 +19,6 @@ class Vm(Thread):
         self.killed = False
         self.variable = {}
         self.end = False
-        assets = os.path.join(Path(u2.__file__).parent, "assets")
-        if not os.path.exists(assets):
-            shutil.copytree("lib/uiautomator2", assets)
-        else:
-            if os.listdir(assets) != os.listdir("lib/uiautomator2"):
-                shutil.rmtree(assets)
-                shutil.copytree("lib/uiautomator2", assets)
         self.control = Uiautomator2(address)
         err = self.control.connect()
         if err is not None:
@@ -54,9 +45,10 @@ class Vm(Thread):
                 self.tags[args[1]] = line
 
         self.images = {}
-        for name in os.listdir(f"{dir}/images"):
-            image = self.control.pillow_to_cv2(Image.open(f"{dir}/images/{name}"))
-            self.images[name] = image
+        if os.path.exists(f"{dir}/images"):
+            for name in os.listdir(f"{dir}/images"):
+                image = self.control.pillow_to_cv2(Image.open(f"{dir}/images/{name}"))
+                self.images[name] = image
 
     def kill(self):
         self.killed = True

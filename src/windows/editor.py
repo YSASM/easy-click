@@ -22,7 +22,7 @@ from src.widgets.image import Image as ImageView
 from src.widgets.listItem import ListItem
 from src.widgets.page import Page
 from src.windows.scriptRunner import ScriptRunner
-
+import traceback
 RED = qRgb(255, 0, 0)
 
 
@@ -334,18 +334,24 @@ class ScriptEditorWindow(Page):
         self.editor.setText(self.editor.toPlainText() + f"\nCLICK {x} {y}")
 
     def on_click_add_image(self):
-        cut_image_window = CutImageWindow(self.dir, self.adb_address.text())
-        cut_image_window.update_image_list = self.update_image_list
-        self.open_page(cut_image_window)
+        try:
+            cut_image_window = CutImageWindow(self.dir, self.adb_address.text())
+            cut_image_window.update_image_list = self.update_image_list
+            self.open_page(cut_image_window)
+        except Exception as e:
+            Bean.cmd_out_list.append(traceback.format_exc())
 
     def on_getted(self, xy):
         self.click_xy_x.setText(str(xy[0]))
         self.click_xy_y.setText(str(xy[1]))
 
     def on_click_click_xy_get(self):
-        get_xy_window = GetXYWindow(self.dir, self.adb_address.text())
-        get_xy_window.getted.connect(self.on_getted)
-        self.open_page(get_xy_window)
+        try:
+            get_xy_window = GetXYWindow(self.dir, self.adb_address.text())
+            get_xy_window.getted.connect(self.on_getted)
+            self.open_page(get_xy_window)
+        except Exception as e:
+            Bean.cmd_out_list.append(traceback.format_exc())
 
     def on_click_image_list_add_image(self, item):
         def func():

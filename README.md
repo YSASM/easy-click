@@ -3,7 +3,6 @@
 ## 简介
 
 easy-click 是一个基于 pyqt 的安卓模拟器脚本框架，用于适应大多数需要使用脚本进行重复工作的情况。
-# 注意 （本软件需要adb，请在电脑中自行安装adb！！！！）
 ## 脚本语法
 easy-click的脚本为一个简单的指令集，每个指令之间以换行分隔。
 [arg] 为必填参数
@@ -91,6 +90,15 @@ GO NEXT
 TAG NOT_IMAGE
 BACK
 GO START
+```
+
+```
+RANDOM 1 3 num
+RANDOM 1 3 num2
+SET XY a 1 num2
+LOG a
+CALC XY a x + num a
+LOG a
 ```
 
 ## 构建

@@ -23,9 +23,24 @@ from src.widgets.page import Page
 from src.widgets.switch import Switch
 from src.windows.chooseDevice import ChooseDevice
 from src.windows.editor import ScriptEditorWindow
+from src.windows.editorSort import EditorSortWindow
 from src.windows.scriptRunner import ScriptRunner
 import platform
-
+from pathlib import Path
+import shutil
+import uiautomator2 as u2
+assets = os.path.join(Path(u2.__file__).parent, "assets")
+Bean.cmd_out_list.append(f"{assets}")
+if not os.path.exists(assets):
+    shutil.copytree("lib/uiautomator2", assets)
+    Bean.cmd_out_list.append("uiautomator2 加载成功")
+else:
+    if os.listdir(assets) != os.listdir("lib/uiautomator2"):
+        shutil.rmtree(assets)
+        shutil.copytree("lib/uiautomator2", assets)
+        Bean.cmd_out_list.append("uiautomator2 加载成功")
+    else:
+        Bean.cmd_out_list.append("uiautomator2 已加载")
 # 创建一个主窗口类，继承自 QMainWindow
 class AddScriptWindow(Page):
     added = Signal()
@@ -155,8 +170,10 @@ class HomeWindow(Page):
 
         head_tools_box = QHBoxLayout()
         add_script = QPushButton("新建")
+        change_sort = QPushButton("更改排序")
         after_run_close_script_switch = Switch(True, False,"完成后关闭","完成后保留",self.after_run_close_script)
         head_tools_box.addWidget(add_script)
+        head_tools_box.addWidget(change_sort)
         head_tools_box.addWidget(after_run_close_script_switch)
         vbox_layout.addLayout(head_tools_box)
         self.script_list = QListWidget()
@@ -179,6 +196,7 @@ class HomeWindow(Page):
         connect_adb_button.clicked.connect(self.connect_adb)
         restart_adb_button.clicked.connect(self.restart_adb)
         add_script.clicked.connect(self.on_click_add_script)
+        change_sort.clicked.connect(self.on_click_change_sort)
         after_run_close_script_switch.changed.connect(
             self.on_after_run_close_script_switch_change
         )
@@ -230,6 +248,17 @@ class HomeWindow(Page):
         self.start_reflash_cmd_out()
         Adb.check_adb()
 
+
+    def on_click_change_sort_change(self,sort):
+        with open("scripts/sort.txt","w+",encoding="utf-8") as f:
+            f.write(sort)
+        self.update_script_list()
+
+    def on_click_change_sort(self):
+        editor = EditorSortWindow()
+        editor.ok.connect(self.on_click_change_sort_change)
+        self.open_page(editor)
+
     def on_after_run_close_script_switch_change(self, value):
         self.after_run_close_script = value
 
@@ -239,7 +268,6 @@ class HomeWindow(Page):
     def connect_all_default_device(self):
         for device in self.default_devices:
             Adb(device).connect()
-
         Adb.check_adb()
 
     def save_defalut_devices(self):
@@ -286,11 +314,32 @@ class HomeWindow(Page):
     def on_add_script(self):
         self.update_script_list()
 
+    def get_scripts(self):
+        scripts = os.listdir("scripts") or []
+        scripts = list(filter(lambda x:x!="sort.txt",scripts))
+        if not os.path.exists("scripts/sort.txt"):
+            with open("scripts/sort.txt","w+",encoding="utf-8") as f:
+                f.write("\n".join(scripts))
+        
+        with open("scripts/sort.txt","r",encoding="utf-8") as f:
+            sort = f.read().replace(" ","").replace("\t","").replace("\r","").split("\n")
+        sort = list(filter(lambda x:x!="",sort))
+        
+        last_scripts_list = []
+        for s in sort:
+            if s in scripts:
+                last_scripts_list.append(s)
+                scripts.remove(s)
+        last_scripts_list += scripts
+        with open("scripts/sort.txt","w+",encoding="utf-8") as f:
+            f.write("\n".join(last_scripts_list))
+        return last_scripts_list
+
     def update_script_list(self):
         self.script_list.clear()
         for item in [
             ScriptListWidgetItem(self, name, self.default_devices, self.get_after_run_close_script)
-            for name in os.listdir("scripts")
+            for name in self.get_scripts()
         ]:
             item.update_script_list = self.update_script_list
             self.script_list.addItem(item)
