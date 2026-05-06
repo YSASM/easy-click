@@ -7,27 +7,32 @@ from src.utils.vm import Vm
 from src.widgets.page import Page
 from .windows import HomeWindow
 
-pages = []
+
+pages = {}
 tasks = []
 
 
-def on_page_close(object: Page):
-    for index, page in enumerate(pages):
-        if page.id == object.id:
-            pages.__delitem__(index)
 def add_vm_task(th: Vm):
     tasks.append(th)
     th.start()
 
+
+def on_page_close(object: Page):
+    print(f"关闭{object.id}")
+    try:
+        if hasattr(pages,str(object.id)):
+            delattr(pages,str(object.id))
+    except Exception as e:
+        print(e)
+
+
 def open_page(page: Page):
+    print(f"开启{page.id}")
     page.closed.connect(on_page_close)
     page.open_page_signal.connect(open_page)
     page.add_vm_task_signal.connect(add_vm_task)
     page.show()
-    pages.append(page)
-
-
-
+    pages[page.id] = page
 
 
 def listen():
@@ -42,12 +47,8 @@ def listen():
 
 
 def start():
-    try:
-        app = QApplication(sys.argv)
-        mw = HomeWindow()
-        open_page(mw)
-        Thread(target=listen, daemon=True).start()
-        app.exec()
-
-    except Exception as e:
-        open("error.log", "w").write(str(e))
+    app = QApplication(sys.argv)
+    mw = HomeWindow()
+    open_page(mw)
+    Thread(target=listen, daemon=True).start()
+    sys.exit(app.exec())

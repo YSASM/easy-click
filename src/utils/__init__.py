@@ -20,23 +20,10 @@ def run_cmd(command):
         output = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)
         return output.decode().encode("utf-8").decode("utf-8")
     except subprocess.CalledProcessError as e:
-        return e.output.decode().encode("utf-8").decode("utf-8")
+        return str(e)
 
 
-def check_adb():
-    Bean.adb_devices.clear()
-    for line in run_cmd("adb devices").splitlines():
-        if line.startswith("List"):
-            continue
-        if line.startswith("*"):
-            continue
-        if line == "\n":
-            continue
-        device = line.split("\t")[0]
-        if device == "":
-            continue
-        Bean.adb_devices.append(device)
-        Bean.cmd_out_list.append(f"检测到设备 {device}")
+
 
 
 def random_time(t):
@@ -48,9 +35,9 @@ def random_time(t):
 
 
 def random_xy(t):
-    int_num = random.randint(-2, 2)
-    float_num = random.randint(-9, 9) / 10
-    random_num = int_num + float_num
+    random_num = random.uniform(-2.9,2.9)
+    random_num = str(random_num).split(".")
+    random_num = float(random_num[0]) + float(random_num[1][0:2]) / 100
     return t + random_num
 
 

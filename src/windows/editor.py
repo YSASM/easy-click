@@ -1,30 +1,96 @@
 import os
+import secrets
+import string
+import traceback
+from io import BytesIO
 
-import time
 from PySide6.QtWidgets import (
     QListWidget,
-    QMainWindow,
     QWidget,
     QVBoxLayout,
     QPushButton,
     QHBoxLayout,
     QLineEdit,
-    QListWidgetItem,
     QLabel,
     QTextEdit,
     QGridLayout,
     QMessageBox,
+    QApplication,
+    QProgressDialog,
+    QScrollArea,
 )
-from PySide6.QtCore import Signal, QRect, Qt, QSize
-from PySide6.QtGui import QPixmap, QPainter, QPen, qRgb, QTextCharFormat, QTextCursor
+from PySide6.QtCore import QTimer, Signal, QRect, Qt, QSize, QObject, QThread
+from PySide6.QtGui import QPainter, QPen, qRgb, QPixmap
 
-from src.utils import Bean, check_adb, run_cmd
-from src.widgets.label import Label
+from src.utils import Bean
+from src.utils.adb import Adb
+from src.utils.uiautomator2Manger import Uiautomator2
 from src.widgets.image import Image as ImageView
 from src.widgets.listItem import ListItem
+from src.widgets.modern_button import apply_modern_button
 from src.widgets.page import Page
+from src.windows.scriptRunner import ScriptRunner
+from PIL import Image as PILImage
 
 RED = qRgb(255, 0, 0)
+
+
+def _pil_image_from_png_bytes(data: bytes):
+    return PILImage.open(BytesIO(data)).convert("RGBA")
+
+
+_RANDOM_IMAGE_NAME_CHARS = string.ascii_lowercase + string.digits
+
+
+def _unique_new_image_png_name(images_dir: str) -> str:
+    """生成 6 位随机小写字母与数字组成的文件名，不与目录内已有 png 冲突。"""
+    try:
+        names = os.listdir(images_dir)
+    except OSError:
+        names = []
+    taken_lower = {n.lower() for n in names}
+    for _ in range(2048):
+        base = "".join(secrets.choice(_RANDOM_IMAGE_NAME_CHARS) for _ in range(6))
+        candidate = f"{base}.png"
+        if candidate.lower() not in taken_lower:
+            return candidate
+    raise RuntimeError("无法生成唯一截图文件名")
+
+
+class _ScreenshotWorker(QObject):
+    finished = Signal(bytes)
+    failed = Signal(str)
+
+    def __init__(self, address: str):
+        super().__init__()
+        self.address = address
+
+    def run(self):
+        try:
+            u2 = Uiautomator2(self.address)
+            u2.connect()
+            pil = u2.screenshot_pillow()
+            buf = BytesIO()
+            pil.save(buf, format="PNG")
+            self.finished.emit(buf.getvalue())
+        except Exception as e:
+            self.failed.emit(str(e) or traceback.format_exc())
+
+
+class _ScriptFileLoadWorker(QObject):
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, path: str):
+        super().__init__()
+        self._path = path
+
+    def run(self):
+        try:
+            with open(self._path, "r", encoding="utf-8") as f:
+                self.finished.emit(f.read())
+        except Exception as e:
+            self.failed.emit(str(e))
 
 
 class Drawing(QWidget):
@@ -56,13 +122,21 @@ class Drawing(QWidget):
 
     # 重写三个时间处理
     def mousePressEvent(self, event):
-        print("mouse press")
         self.rect = (event.x(), event.y(), 0, 0)
 
     def mouseReleaseEvent(self, event):
-        print("mouse release")
+        if self.rect is None:
+            return
+        x0, y0, w, h = self.rect
+        x1, y1 = x0 + w, y0 + h
+        left, top = min(x0, x1), min(y0, y1)
+        rw, rh = abs(w), abs(h)
+        self.rect = (left, top, rw, rh)
+        self.update()
 
     def mouseMoveEvent(self, event):
+        if self.rect is None:
+            return
         start_x, start_y = self.rect[0:2]
         self.rect = (start_x, start_y, event.x() - start_x, event.y() - start_y)
         self.update()
@@ -72,99 +146,217 @@ class GetXYWindow(Page):
     getted = Signal(list)
 
     def __init__(self, dir, address):
+        super().__init__()
         self.dir = dir
         self.address = address
-        super().__init__()  # 调用父类 QMainWindow 的初始化方法
-        if not os.path.exists(dir + "/temp"):
-            os.mkdir(dir + "/temp")
-        id = os.listdir(dir + "/temp").__len__()
-        run_cmd(self.make_cmd("shell screencap -p /sdcard/screenshot.png"))
-        run_cmd(self.make_cmd(f"pull /sdcard/screenshot.png {dir}/temp/image{id}.png"))
-        time.sleep(1)
-        self.resize(200, 100)  # 设置窗口大小
-        self.setWindowTitle("取点")  # 设置窗口标题
+        self.setWindowTitle("取点")
+        self.resize(420, 100)
+        self._thread = None
+        self._build_loading_ui()
+        self._start_screenshot_thread()
+
+    def _build_loading_ui(self):
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
-        self.image = QPixmap(f"{dir}/temp/image{id}.png")
-        os.remove(f"{dir}/temp/image{id}.png")
-        self.show_image = Label()
-        self.show_image.setPixmap(self.image)
-        self.show_image.setFixedSize(self.image.size())
-        v_box = QGridLayout()
-        central_widget.setLayout(v_box)
+        lo = QVBoxLayout(central_widget)
+        lo.addWidget(QLabel("正在连接设备并截取屏幕…"))
+
+    def _start_screenshot_thread(self):
+        self._thread = QThread(self)
+        self._screenshot_worker = _ScreenshotWorker(self.address)
+        self._screenshot_worker.moveToThread(self._thread)
+        self._thread.started.connect(self._screenshot_worker.run)
+        self._screenshot_worker.finished.connect(self._on_screenshot_ready)
+        self._screenshot_worker.failed.connect(self._on_screenshot_failed)
+        self._screenshot_worker.finished.connect(self._thread.quit)
+        self._screenshot_worker.failed.connect(self._thread.quit)
+        self._thread.finished.connect(self._screenshot_worker.deleteLater)
+        self._thread.start()
+
+    def _on_screenshot_failed(self, msg: str):
+        QMessageBox.warning(self, "取点失败", msg)
+        self.close()
+
+    def _on_screenshot_ready(self, png_bytes: bytes):
+        pil = _pil_image_from_png_bytes(png_bytes)
+        central_widget = QWidget(self)
+        self.setCentralWidget(central_widget)
+        v_box = QGridLayout(central_widget)
+        self.show_image = ImageView(pil)
         v_box.addWidget(self.show_image, 0, 0)
         self.show_image.clicked.connect(self.on_click)
-
-    def make_cmd(self, cmd):
-        if self.address == "":
-            return f"adb {cmd}"
-        return f"adb -s {self.address} {cmd}"
+        w, h = self.show_image.image.width(), self.show_image.image.height()
+        self.resize(min(w + 48, 1400), min(h + 80, 900))
+        self._page_center_on_screen()
 
     def on_click(self, event):
         xy = [event.x(), event.y()]
         self.getted.emit(xy)
         self.close()
 
+    def closeEvent(self, event):
+        t = getattr(self, "_thread", None)
+        if t is not None:
+            try:
+                if t.isRunning():
+                    t.quit()
+                    t.wait(2000)
+            except RuntimeError:
+                pass
+        return super().closeEvent(event)
+
 
 class CutImageWindow(Page):
-    def __init__(self, dir, address):
+    def __init__(self, dir, address, replace_filename=None):
+        super().__init__()
         self.dir = dir
         self.address = address
-        super().__init__()  # 调用父类 QMainWindow 的初始化方法
-        if not os.path.exists(dir + "/temp"):
-            os.mkdir(dir + "/temp")
-        id = os.listdir(dir + "/temp").__len__()
-        run_cmd(self.make_cmd("shell screencap -p /sdcard/screenshot.png"))
-        run_cmd(self.make_cmd(f"pull /sdcard/screenshot.png {dir}/temp/image{id}.png"))
-        time.sleep(1)
-        self.resize(200, 100)  # 设置窗口大小
-        self.setWindowTitle("截图")  # 设置窗口标题
+        self.replace_filename = replace_filename
+        self.update_image_list = lambda: None
+        self._thread = None
+        title = "重新截图" if replace_filename else "截图"
+        self.setWindowTitle(title)
+        self.resize(420, 100)
+        self._build_loading_ui()
+        self._start_screenshot_thread()
+
+    def _build_loading_ui(self):
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
-        self.show_image = ImageView(f"{dir}/temp/image{id}.png")
-        os.remove(f"{dir}/temp/image{id}.png")
-        # self.show_image.setPixmap(self.image)
-        # self.show_image.setFixedSize(self.image.size())
-        v_box = QGridLayout()
-        central_widget.setLayout(v_box)
+        lo = QVBoxLayout(central_widget)
+        lo.addWidget(QLabel("正在连接设备并截取屏幕，请稍候…"))
+
+    def _start_screenshot_thread(self):
+        self._thread = QThread(self)
+        self._screenshot_worker = _ScreenshotWorker(self.address)
+        self._screenshot_worker.moveToThread(self._thread)
+        self._thread.started.connect(self._screenshot_worker.run)
+        self._screenshot_worker.finished.connect(self._on_screenshot_ready)
+        self._screenshot_worker.failed.connect(self._on_screenshot_failed)
+        self._screenshot_worker.finished.connect(self._thread.quit)
+        self._screenshot_worker.failed.connect(self._thread.quit)
+        self._thread.finished.connect(self._screenshot_worker.deleteLater)
+        self._thread.start()
+
+    def _on_screenshot_failed(self, msg: str):
+        QMessageBox.warning(self, "截图失败", msg)
+        self.close()
+
+    def _on_screenshot_ready(self, png_bytes: bytes):
+        pil = _pil_image_from_png_bytes(png_bytes)
+        central_widget = QWidget(self)
+        self.setCentralWidget(central_widget)
+        v_box = QGridLayout(central_widget)
+        self.show_image = ImageView(pil)
         self.cut_box = Drawing()
-        self.cut_box.setFixedSize(self.show_image.image.size())
+        self.cut_box.setFixedSize(self.show_image.pixmap().size())
         v_box.addWidget(self.show_image, 0, 0)
         v_box.addWidget(self.cut_box, 0, 0)
         self.cut_box.raise_()
-        ok = QPushButton("确定")
+        ok = QPushButton("确定保存选区")
+        apply_modern_button(ok, "emerald")
         v_box.addWidget(ok)
         ok.clicked.connect(self.on_click_ok)
-
-    def make_cmd(self, cmd):
-        if self.address == "":
-            return f"adb {cmd}"
-        return f"adb -s {self.address} {cmd}"
+        hint = QLabel("拖拽框选要保存的区域")
+        v_box.addWidget(hint)
+        w, h = self.show_image.image.width(), self.show_image.image.height()
+        self.resize(min(w + 48, 1400), min(h + 140, 900))
+        self._page_center_on_screen()
 
     def on_click_ok(self):
+        if self.cut_box.rect is None:
+            QMessageBox.warning(self, "提示", "请先拖拽框选截图区域")
+            return
         x, y, w, h = self.cut_box.rect
-        rect = QRect(x, y, w, h)
+        if w <= 0 or h <= 0:
+            QMessageBox.warning(self, "提示", "框选区域无效，请重新拖拽")
+            return
+        pm = self.show_image.image
+        rect = QRect(int(x), int(y), int(w), int(h))
         if (
-            rect.x() + rect.width() > self.show_image.image.width()
-            or rect.y() + rect.height() > self.show_image.image.height()
+            rect.x() < 0
+            or rect.y() < 0
+            or rect.x() + rect.width() > pm.width()
+            or rect.y() + rect.height() > pm.height()
         ):
-            print("错误：截取区域超出图像范围")
+            QMessageBox.warning(self, "提示", "截取区域超出屏幕范围")
             return
 
-        # 截取子图像
-        cropped_pixmap = self.show_image.image.copy(rect)
-
-        # 保存截图（示例路径）
-        if not os.path.exists(self.dir + "/images"):
-            os.mkdir(self.dir + "/images")
-        id = os.listdir(self.dir + "/images").__len__()
-        save_path = self.dir + f"/images/image{id}.png"
+        cropped_pixmap = pm.copy(rect)
+        images_dir = os.path.join(self.dir, "images")
+        os.makedirs(images_dir, exist_ok=True)
+        if self.replace_filename:
+            save_path = os.path.join(images_dir, self.replace_filename)
+        else:
+            save_path = os.path.join(images_dir, _unique_new_image_png_name(images_dir))
         cropped_pixmap.save(save_path)
         self.update_image_list()
         self.close()
 
-    def update_image_list(self):
-        pass
+    def closeEvent(self, event):
+        t = getattr(self, "_thread", None)
+        if t is not None:
+            try:
+                if t.isRunning():
+                    t.quit()
+                    t.wait(2000)
+            except RuntimeError:
+                pass
+        return super().closeEvent(event)
+
+
+class ImagePreviewWindow(Page):
+    """大图预览：按窗口可视区域保持宽高比缩放（宽或高贴边）。"""
+
+    def __init__(self, image_path: str):
+        super().__init__()
+        self._image_path = image_path
+        base = os.path.basename(image_path)
+        self.setWindowTitle(f"预览 - {base}")
+        self.resize(880, 720)
+        self._full_pm = QPixmap(image_path)
+        cw = QWidget(self)
+        self.setCentralWidget(cw)
+        self._root_layout = QVBoxLayout(cw)
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._label = QLabel()
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if self._full_pm.isNull():
+            self._label.setText("无法加载图片")
+        self._scroll.setWidget(self._label)
+        self._root_layout.addWidget(self._scroll, 1)
+        self._close_btn = QPushButton("关闭")
+        apply_modern_button(self._close_btn, "slate")
+        self._close_btn.clicked.connect(self.close)
+        self._root_layout.addWidget(self._close_btn)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refit_pixmap()
+        QTimer.singleShot(0, self._refit_pixmap)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._refit_pixmap()
+
+    def _refit_pixmap(self):
+        if self._full_pm.isNull():
+            return
+        vp = self._scroll.viewport().size()
+        pad = 8
+        aw = max(vp.width() - pad * 2, 1)
+        ah = max(vp.height() - pad * 2, 1)
+        if aw < 8 or ah < 8:
+            return
+        scaled = self._full_pm.scaled(
+            aw,
+            ah,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._label.setPixmap(scaled)
+        self._label.setMinimumSize(scaled.size())
 
 
 class ScriptEditoImagesWidgetItem(ListItem):
@@ -175,28 +367,103 @@ class ScriptEditoImagesWidgetItem(ListItem):
         self.layout.setContentsMargins(0, 0, 0, 0)
         image = ImageView(f"{dir}/images/{text}")
         image.setSize(100, 100)
-        self.name = QLineEdit(text)
+        self.name = QLabel(text)
         self.name.setFixedSize(QSize(80, 20))
+        self.preview_button = QPushButton("预览")
         self.change_name_button = QPushButton("修改名称")
         self.click_button = QPushButton("点击图片")
         self.add_button = QPushButton("寻找图片")
+        self.re_cut_image_button = QPushButton("重新截图")
         self.delete_button = QPushButton("删除图片")
+        apply_modern_button(self.preview_button, "indigo")
+        apply_modern_button(self.change_name_button, "slate")
+        apply_modern_button(self.add_button, "blue")
+        apply_modern_button(self.click_button, "teal")
+        apply_modern_button(self.re_cut_image_button, "amber")
+        apply_modern_button(self.delete_button, "rose")
         self.layout.addWidget(image)
+        self.layout.addWidget(self.preview_button)
         self.layout.addWidget(self.name)
         self.layout.addWidget(self.change_name_button)
         self.layout.addWidget(self.add_button)
         self.layout.addWidget(self.click_button)
+        self.layout.addWidget(self.re_cut_image_button)
         self.layout.addWidget(self.delete_button)
 
 
+# 创建一个主窗口类，继承自 QMainWindow
+class ChangeNameWindow(Page):
+    change = Signal(str)
+
+    def __init__(self,name):
+        super().__init__()  # 调用父类 QMainWindow 的初始化方法
+        self.resize(200, 100)  # 设置窗口大小
+        self.setWindowTitle("修改名称")  # 设置窗口标题
+        central_widget = QWidget(self)
+        self.setCentralWidget(central_widget)
+        h_box = QHBoxLayout()
+        central_widget.setLayout(h_box)
+        self.name = QLineEdit(name)
+        h_box.addWidget(self.name)
+        ok = QPushButton("确定")
+        apply_modern_button(ok, "blue")
+        h_box.addWidget(ok)
+        ok.clicked.connect(self.on_click_ok)
+
+    def on_click_ok(self):
+        name = self.name.text()
+        self.change.emit(name)
+        self.close()
+
 class ScriptEditorWindow(Page):
     def __init__(self, dir):
-        super().__init__()  # 调用父类 QMainWindow 的初始化方法
-        self.resize(1200, 600)  # 设置窗口大小
-        self.setWindowTitle("编辑")
+        super().__init__()
+        self.resize(1200, 600)
+        self.name = dir.replace("/", "\\").split("\\")[-1]
+        self.setWindowTitle(f"编辑-{self.name}")
         self.dir = dir
-        self.file = dir + "/index.txt"
-        self.content = open(self.file, "r+", encoding="utf-8").read()
+        self.file = os.path.join(self.dir, "index.txt")
+        self.content = ""
+        self._script_thread = None
+        self._script_worker = None
+        loading = QWidget(self)
+        self.setCentralWidget(loading)
+        loading_lo = QVBoxLayout(loading)
+        loading_lo.addWidget(QLabel("正在加载脚本…"))
+        self._start_script_load()
+
+    def _start_script_load(self):
+        self._script_thread = QThread(self)
+        self._script_worker = _ScriptFileLoadWorker(self.file)
+        self._script_worker.moveToThread(self._script_thread)
+        self._script_thread.started.connect(self._script_worker.run)
+        self._script_worker.finished.connect(self._on_script_file_loaded)
+        self._script_worker.failed.connect(self._on_script_file_load_failed)
+        self._script_worker.finished.connect(self._script_thread.quit)
+        self._script_worker.failed.connect(self._script_thread.quit)
+        self._script_thread.finished.connect(self._script_worker.deleteLater)
+        self._script_thread.start()
+
+    def _on_script_file_loaded(self, content: str):
+        self.content = content
+        self.init()
+
+    def _on_script_file_load_failed(self, msg: str):
+        QMessageBox.critical(self, "加载脚本失败", msg)
+        self.close()
+
+    def closeEvent(self, event):
+        t = getattr(self, "_script_thread", None)
+        if t is not None:
+            try:
+                if t.isRunning():
+                    t.quit()
+                    t.wait(2000)
+            except RuntimeError:
+                pass
+        return super().closeEvent(event)
+
+    def init(self):
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
         h_box = QHBoxLayout()
@@ -212,24 +479,26 @@ class ScriptEditorWindow(Page):
         # CLICK argname | 点击 argname
         # SEND_TEXT "ssdasda" | 输入 XXX
         # WAIT 3 | 等待 3 秒
-        check_adb()
+        Adb.check_adb()
+        adb_label = QLabel("设备")
         self.adb_address = QLineEdit(
             Bean.adb_devices[0] if len(Bean.adb_devices) > 0 else ""
         )
+        v_box.addWidget(adb_label)
         v_box.addWidget(self.adb_address)
         click_xy_box = QVBoxLayout()
         v_box.addLayout(click_xy_box)
 
         click_xy_get_box = QHBoxLayout()
         click_xy_box.addLayout(click_xy_get_box)
-        click_xy_get_button = QPushButton("获取坐标")
-        click_xy_get_box.addWidget(click_xy_get_button)
-        click_xy_get_button.clicked.connect(self.on_click_click_xy_get)
+        
 
         click_xy_input_box = QHBoxLayout()
         click_xy_label = QLabel("点击坐标")
+        
         click_xy_box.addWidget(click_xy_label)
         click_xy_box.addLayout(click_xy_input_box)
+        
         click_xy_x_label = QLabel("x:")
         click_xy_y_label = QLabel("y:")
         self.click_xy_x = QLineEdit()
@@ -238,15 +507,20 @@ class ScriptEditorWindow(Page):
         click_xy_input_box.addWidget(self.click_xy_x)
         click_xy_input_box.addWidget(click_xy_y_label)
         click_xy_input_box.addWidget(self.click_xy_y)
+        click_xy_get_button = QPushButton("获取坐标")
         click_xy_button = QPushButton("插入")
+        apply_modern_button(click_xy_get_button, "blue")
+        apply_modern_button(click_xy_button, "teal")
+        click_xy_input_box.addWidget(click_xy_get_button)
         click_xy_input_box.addWidget(click_xy_button)
         click_xy_button.clicked.connect(self.on_click_click_xy)
-
+        click_xy_get_button.clicked.connect(self.on_click_click_xy_get)
         add_image_box = QHBoxLayout()
         v_box.addLayout(add_image_box)
         add_image_label = QLabel("点击图片")
         add_image_box.addWidget(add_image_label)
         add_image_button = QPushButton("截图")
+        apply_modern_button(add_image_button, "sky")
         add_image_box.addWidget(add_image_button)
         self.image_list = QListWidget()
         self.image_list.setStyleSheet(
@@ -255,7 +529,8 @@ class ScriptEditorWindow(Page):
                 height: 200px; 
             }
             QListWidget::item {
-                padding: 5px;height:40px; 
+                padding: 4px 6px;
+                min-height: 28px;
             }
             """
         )
@@ -263,8 +538,15 @@ class ScriptEditorWindow(Page):
         self.update_image_list()
 
         save_button = QPushButton("保存")
-        v_box.addWidget(save_button)
+        run_button = QPushButton("运行")
+        apply_modern_button(save_button, "emerald")
+        apply_modern_button(run_button, "violet")
+        tools_buttons = QHBoxLayout()
+        v_box.addLayout(tools_buttons)
+        tools_buttons.addWidget(save_button)
+        tools_buttons.addWidget(run_button)
         save_button.clicked.connect(self.on_click_save)
+        run_button.clicked.connect(self.on_click_run)
 
         # 编辑器
         self.editor = QTextEdit()
@@ -273,6 +555,22 @@ class ScriptEditorWindow(Page):
         h_box.addWidget(self.editor)
         self.editor.setStyleSheet("QTextEdit { width: 500px; }")
         add_image_button.clicked.connect(self.on_click_add_image)
+
+    def on_changed_device(self, address):
+        try:
+            sr = ScriptRunner(address, self.name)
+            self.open_page(sr)
+            sr.start()
+        except Exception as e:
+            Bean.cmd_out_list.append(str(e))
+
+    def on_click_run(self):
+        with open(self.file, "w+", encoding="utf-8") as f:
+            self.content = self.editor.toPlainText()
+            f.write(self.content)
+        sr = ScriptRunner(self.adb_address.text(), self.name, False)
+        self.open_page(sr)
+        sr.start()
 
     def on_click_save(self):
         with open(self.file, "w+", encoding="utf-8") as f:
@@ -293,18 +591,24 @@ class ScriptEditorWindow(Page):
         self.editor.setText(self.editor.toPlainText() + f"\nCLICK {x} {y}")
 
     def on_click_add_image(self):
-        cut_image_window = CutImageWindow(self.dir, self.adb_address.text())
-        cut_image_window.update_image_list = self.update_image_list
-        self.open_page(cut_image_window)
+        try:
+            cut_image_window = CutImageWindow(self.dir, self.adb_address.text())
+            cut_image_window.update_image_list = self.update_image_list
+            self.open_page(cut_image_window)
+        except Exception:
+            Bean.cmd_out_list.append(traceback.format_exc())
 
     def on_getted(self, xy):
         self.click_xy_x.setText(str(xy[0]))
         self.click_xy_y.setText(str(xy[1]))
 
     def on_click_click_xy_get(self):
-        get_xy_window = GetXYWindow(self.dir, self.adb_address.text())
-        get_xy_window.getted.connect(self.on_getted)
-        self.open_page(get_xy_window)
+        try:
+            get_xy_window = GetXYWindow(self.dir, self.adb_address.text())
+            get_xy_window.getted.connect(self.on_getted)
+            self.open_page(get_xy_window)
+        except Exception as e:
+            Bean.cmd_out_list.append(traceback.format_exc())
 
     def on_click_image_list_add_image(self, item):
         def func():
@@ -318,9 +622,42 @@ class ScriptEditorWindow(Page):
 
     def on_click_image_list_delete_image(self, item):
         def func():
-            path = self.dir + "/images/" + item.text()
-            os.remove(path)
+            fname = item.text()
+            r1 = QMessageBox.question(
+                self,
+                "删除确认",
+                f"确定要删除图片「{fname}」吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if r1 != QMessageBox.StandardButton.Yes:
+                return
+            r2 = QMessageBox.question(
+                self,
+                "再次确认",
+                "删除后无法恢复，是否继续？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if r2 != QMessageBox.StandardButton.Yes:
+                return
+            path = os.path.join(self.dir, "images", fname)
+            if os.path.isfile(path):
+                os.remove(path)
             self.update_image_list()
+
+        return func
+
+    def on_click_re_cut_image(self, item):
+        def func():
+            try:
+                w = CutImageWindow(
+                    self.dir, self.adb_address.text(), replace_filename=item.text()
+                )
+                w.update_image_list = self.update_image_list
+                self.open_page(w)
+            except Exception:
+                Bean.cmd_out_list.append(traceback.format_exc())
 
         return func
 
@@ -331,34 +668,71 @@ class ScriptEditorWindow(Page):
             self.editor.setText(self.editor.toPlainText() + f"\nCLICK {name}")
 
         return func
+    
+    def on_change_name(self,old):
+        def func(new):
+            os.rename(os.path.join(self.dir,"images",old), os.path.join(self.dir,"images",new))
+            self.update_image_list()
+        return func
 
     def on_click_change_name(self, item):
         def func():
-            path = self.dir + "/images/" + item.text()
-            new = self.dir + "/images/" + item.name.text()
-            item.setText(item.name.text())
-            os.rename(path, new)
+            cnw = ChangeNameWindow(item.text())
+            cnw.change.connect(self.on_change_name(item.text()))
+            self.open_page(cnw)
+        return func
+
+    def on_click_image_preview(self, item):
+        def func():
+            path = os.path.join(self.dir, "images", item.text())
+            if os.path.isfile(path):
+                self.open_page(ImagePreviewWindow(path))
 
         return func
 
     def update_image_list(self):
+        if not hasattr(self, "image_list"):
+            return
+        images_dir = os.path.join(self.dir, "images")
+        try:
+            os.makedirs(images_dir, exist_ok=True)
+        except OSError:
+            pass
         try:
             self.image_list.clear()
-            for item in [
-                ScriptEditoImagesWidgetItem(self, name, self.dir)
-                for name in os.listdir(self.dir + "/images") or []
-            ]:
+            names = sorted(
+                n
+                for n in os.listdir(images_dir)
+                if n.lower().endswith(".png")
+            )
+            if not names:
+                return
+            dlg = QProgressDialog("正在加载图片缩略图…", "取消", 0, len(names), self)
+            dlg.setWindowModality(Qt.WindowModal)
+            dlg.setMinimumDuration(0)
+            dlg.setValue(0)
+            for i, name in enumerate(names):
+                if dlg.wasCanceled():
+                    break
+                dlg.setValue(i)
+                QApplication.processEvents()
+                item = ScriptEditoImagesWidgetItem(self, name, self.dir)
                 item.change_name_button.clicked.connect(self.on_click_change_name(item))
+                item.preview_button.clicked.connect(self.on_click_image_preview(item))
                 item.click_button.clicked.connect(
                     self.on_click_image_list_click_image(item)
                 )
                 item.add_button.clicked.connect(
                     self.on_click_image_list_add_image(item)
                 )
+                item.re_cut_image_button.clicked.connect(
+                    self.on_click_re_cut_image(item)
+                )
                 item.delete_button.clicked.connect(
                     self.on_click_image_list_delete_image(item)
                 )
                 self.image_list.addItem(item)
                 self.image_list.setItemWidget(item, item.widget)
-        except:
-            pass
+            dlg.setValue(len(names))
+        except Exception:
+            Bean.cmd_out_list.append(traceback.format_exc())
