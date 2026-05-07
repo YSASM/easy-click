@@ -3,6 +3,7 @@ import secrets
 import string
 import traceback
 from io import BytesIO
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QListWidget,
@@ -12,15 +13,16 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
     QLabel,
-    QTextEdit,
     QGridLayout,
     QMessageBox,
     QApplication,
     QProgressDialog,
     QScrollArea,
+    QTextEdit,
+    QTextBrowser,
 )
 from PySide6.QtCore import QTimer, Signal, QRect, Qt, QSize, QObject, QThread
-from PySide6.QtGui import QPainter, QPen, qRgb, QPixmap
+from PySide6.QtGui import QPainter, QPen, qRgb, QPixmap, QImageReader
 
 from src.utils import Bean
 from src.utils.adb import Adb
@@ -28,6 +30,7 @@ from src.utils.uiautomator2Manger import Uiautomator2
 from src.widgets.image import Image as ImageView
 from src.widgets.listItem import ListItem
 from src.widgets.modern_button import apply_modern_button
+from src.widgets.script_editor import ModernScriptEditor
 from src.widgets.page import Page
 from src.windows.scriptRunner import ScriptRunner
 from PIL import Image as PILImage
@@ -55,6 +58,37 @@ def _unique_new_image_png_name(images_dir: str) -> str:
         if candidate.lower() not in taken_lower:
             return candidate
     raise RuntimeError("无法生成唯一截图文件名")
+
+
+def _load_fast_thumbnail(path: str, max_side: int = 100) -> QPixmap:
+    """
+    读取低质量缩略图：优先用 QImageReader 直接按目标尺寸解码，避免加载大图导致卡顿。
+    """
+    reader = QImageReader(path)
+    try:
+        sz = reader.size()
+        if not sz.isEmpty():
+            w, h = sz.width(), sz.height()
+            if w > 0 and h > 0:
+                if w >= h:
+                    tw, th = max_side, max(1, int(max_side * h / w))
+                else:
+                    th, tw = max_side, max(1, int(max_side * w / h))
+                reader.setScaledSize(QSize(tw, th))
+    except Exception:
+        pass
+    img = reader.read()
+    if img.isNull():
+        pm = QPixmap(path)
+        if not pm.isNull():
+            return pm.scaled(
+                max_side,
+                max_side,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.FastTransformation,
+            )
+        return QPixmap()
+    return QPixmap.fromImage(img)
 
 
 class _ScreenshotWorker(QObject):
@@ -365,8 +399,23 @@ class ScriptEditoImagesWidgetItem(ListItem):
         self.widget = QWidget()
         self.layout = QHBoxLayout(self.widget)
         self.layout.setContentsMargins(0, 0, 0, 0)
-        image = ImageView(f"{dir}/images/{text}")
-        image.setSize(100, 100)
+        # 缩略图：低质量快速加载（避免加载原图导致列表卡顿）
+        image = QLabel()
+        image.setFixedSize(QSize(100, 100))
+        image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        image.setStyleSheet(
+            "QLabel { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 8px; }"
+        )
+        pm = _load_fast_thumbnail(os.path.join(dir, "images", text), 100)
+        if not pm.isNull():
+            image.setPixmap(
+                pm.scaled(
+                    96,
+                    96,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.FastTransformation,
+                )
+            )
         self.name = QLabel(text)
         self.name.setFixedSize(QSize(80, 20))
         self.preview_button = QPushButton("预览")
@@ -415,6 +464,61 @@ class ChangeNameWindow(Page):
         self.change.emit(name)
         self.close()
 
+
+def _project_readme_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "README.md"
+
+
+class TutorialWindow(Page):
+    """展示项目 README.md，供编辑页「教程」按钮打开。"""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("脚本教程")
+        self.resize(760, 680)
+        central = QWidget(self)
+        self.setCentralWidget(central)
+        lo = QVBoxLayout(central)
+        body = QTextBrowser(self)
+        body.setOpenExternalLinks(True)
+        body.setPlaceholderText("正在加载…")
+        try:
+            text = _project_readme_path().read_text(encoding="utf-8")
+        except OSError:
+            text = (
+                "未找到 README.md。\n\n"
+                "请确认程序从项目根目录运行，且存在文件：\n"
+                f"{_project_readme_path()}"
+            )
+        # Qt 的 Markdown 渲染能力取决于版本：优先 setMarkdown，失败则退回纯文本
+        try:
+            body.setMarkdown(text)
+        except Exception:
+            body.setPlainText(text)
+        body.setStyleSheet(
+            """
+            QTextBrowser {
+                background-color: #fafafa;
+                color: #1e293b;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                padding: 12px 14px;
+                font-size: 13px;
+                font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+                line-height: 1.55;
+            }
+            """
+        )
+        lo.addWidget(body)
+        row = QHBoxLayout()
+        row.addStretch()
+        close_btn = QPushButton("关闭")
+        apply_modern_button(close_btn, "slate")
+        close_btn.clicked.connect(self.close)
+        row.addWidget(close_btn)
+        lo.addLayout(row)
+
+
 class ScriptEditorWindow(Page):
     def __init__(self, dir):
         super().__init__()
@@ -426,6 +530,9 @@ class ScriptEditorWindow(Page):
         self.content = ""
         self._script_thread = None
         self._script_worker = None
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setSingleShot(True)
+        self._autosave_timer.timeout.connect(self._persist_script_file)
         loading = QWidget(self)
         self.setCentralWidget(loading)
         loading_lo = QVBoxLayout(loading)
@@ -453,6 +560,12 @@ class ScriptEditorWindow(Page):
         self.close()
 
     def closeEvent(self, event):
+        if getattr(self, "editor", None) is not None:
+            try:
+                self._autosave_timer.stop()
+                self._persist_script_file()
+            except Exception:
+                pass
         t = getattr(self, "_script_thread", None)
         if t is not None:
             try:
@@ -462,6 +575,17 @@ class ScriptEditorWindow(Page):
             except RuntimeError:
                 pass
         return super().closeEvent(event)
+
+    def _script_image_names_for_completion(self):
+        images_dir = os.path.join(self.dir, "images")
+        try:
+            if not os.path.isdir(images_dir):
+                return []
+            return sorted(
+                n for n in os.listdir(images_dir) if n.lower().endswith(".png")
+            )
+        except OSError:
+            return []
 
     def init(self):
         central_widget = QWidget(self)
@@ -537,24 +661,43 @@ class ScriptEditorWindow(Page):
         v_box.addWidget(self.image_list)
         self.update_image_list()
 
-        save_button = QPushButton("保存")
         run_button = QPushButton("运行")
-        apply_modern_button(save_button, "emerald")
+        tutorial_button = QPushButton("教程")
         apply_modern_button(run_button, "violet")
+        apply_modern_button(tutorial_button, "sky")
         tools_buttons = QHBoxLayout()
         v_box.addLayout(tools_buttons)
-        tools_buttons.addWidget(save_button)
         tools_buttons.addWidget(run_button)
-        save_button.clicked.connect(self.on_click_save)
+        tools_buttons.addWidget(tutorial_button)
         run_button.clicked.connect(self.on_click_run)
+        tutorial_button.clicked.connect(self.on_click_tutorial)
 
-        # 编辑器
-        self.editor = QTextEdit()
-        self.editor.setText(self.content)
-        self.editor.setFixedSize(QSize(600, 600))
-        h_box.addWidget(self.editor)
-        self.editor.setStyleSheet("QTextEdit { width: 500px; }")
+        # 编辑器（DSL 高亮 + 补全）
+        self.editor = ModernScriptEditor(self)
+        self.editor.textChanged.connect(self._schedule_editor_autosave)
+        self.editor.blockSignals(True)
+        self.editor.setPlainText(self.content)
+        self.editor.blockSignals(False)
+        self.editor.setMinimumSize(QSize(480, 420))
+        self.editor.set_image_completion_provider(self._script_image_names_for_completion)
+        h_box.addWidget(self.editor, 1)
         add_image_button.clicked.connect(self.on_click_add_image)
+
+    def _persist_script_file(self):
+        """将当前编辑器内容写入 index.txt（用于自动保存与关闭前冲刷）。"""
+        if getattr(self, "editor", None) is None:
+            return
+        text = self.editor.toPlainText()
+        self.content = text
+        try:
+            with open(self.file, "w", encoding="utf-8") as f:
+                f.write(text)
+        except OSError as e:
+            Bean.cmd_out_list.append(f"脚本保存失败: {self.file}: {e}")
+
+    def _schedule_editor_autosave(self):
+        self._autosave_timer.stop()
+        self._autosave_timer.start(300)
 
     def on_changed_device(self, address):
         try:
@@ -565,20 +708,14 @@ class ScriptEditorWindow(Page):
             Bean.cmd_out_list.append(str(e))
 
     def on_click_run(self):
-        with open(self.file, "w+", encoding="utf-8") as f:
-            self.content = self.editor.toPlainText()
-            f.write(self.content)
+        self._autosave_timer.stop()
+        self._persist_script_file()
         sr = ScriptRunner(self.adb_address.text(), self.name, False)
         self.open_page(sr)
         sr.start()
 
-    def on_click_save(self):
-        with open(self.file, "w+", encoding="utf-8") as f:
-            self.content = self.editor.toPlainText()
-            f.write(self.content)
-        msg = QMessageBox()
-        msg.setText("保存成功")
-        msg.exec_()
+    def on_click_tutorial(self):
+        self.open_page(TutorialWindow())
 
     def on_click_click_xy(self):
         x = self.click_xy_x.text()
@@ -588,7 +725,7 @@ class ScriptEditorWindow(Page):
             msg.setText("请输入x,y坐标")
             msg.exec_()
             return
-        self.editor.setText(self.editor.toPlainText() + f"\nCLICK {x} {y}")
+        self.editor.insert_line_after_cursor(f"CLICK {x} {y}")
 
     def on_click_add_image(self):
         try:
@@ -614,8 +751,8 @@ class ScriptEditorWindow(Page):
         def func():
             file_name = item.text()
             name = file_name.replace(".png", "")
-            self.editor.setText(
-                self.editor.toPlainText() + f"\nFIND_IMAGE {file_name} {name}"
+            self.editor.insert_line_after_cursor(
+                f"FIND_IMAGE {file_name} {name}"
             )
 
         return func
@@ -665,7 +802,7 @@ class ScriptEditorWindow(Page):
         def func():
             file_name = item.text()
             name = file_name.replace(".png", "")
-            self.editor.setText(self.editor.toPlainText() + f"\nCLICK {name}")
+            self.editor.insert_line_after_cursor(f"CLICK {name}")
 
         return func
     
@@ -706,6 +843,8 @@ class ScriptEditorWindow(Page):
                 if n.lower().endswith(".png")
             )
             if not names:
+                if hasattr(self, "editor"):
+                    self.editor.refresh_completion()
                 return
             dlg = QProgressDialog("正在加载图片缩略图…", "取消", 0, len(names), self)
             dlg.setWindowModality(Qt.WindowModal)
@@ -734,5 +873,7 @@ class ScriptEditorWindow(Page):
                 self.image_list.addItem(item)
                 self.image_list.setItemWidget(item, item.widget)
             dlg.setValue(len(names))
+            if hasattr(self, "editor"):
+                self.editor.refresh_completion()
         except Exception:
             Bean.cmd_out_list.append(traceback.format_exc())

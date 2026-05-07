@@ -1,84 +1,97 @@
 # easy-click
 
-## 简介
+在 PC 上通过 **ADB / uiautomator2** 连接安卓设备，用简易脚本控制界面点击、找图、等待与跳转。**学习交流使用。**
 
-easy-click 是一个基于 pyqt 的安卓模拟器脚本框架，用于适应大多数需要使用脚本进行重复工作的情况。
-# 注意 （本软件需要adb，请在电脑中自行安装adb！！！！）
-## 脚本语法
-easy-click的脚本为一个简单的指令集，每个指令之间以换行分隔。
-[arg] 为必填参数
-(arg)为可选参数
-```
-# 启动app
-START [包名]
-# 调用其他脚本
-IMPORT [脚本名 如：script1]
-# 回到主页
-HOME
-# 返回
-BACK
-# 结束脚本
-END
-# 标签
-TAG [标签名]
-# 跳转标签
-GO [标签名]
-# 匹配图片
-FIND_IMAGE [图片地址，如：image0.png] [存放坐标的变量名，如：image0] (如果匹配到跳转的标签名) (如果匹配不到跳转的标签名)
+---
 
-# 点击
-CLICK [坐标变量名，如：image0]
-CLICK [x坐标] [y坐标]
+## 目录里有什么
 
-# 滑动
-SWIPE [起始坐标变量名，如：image0] [结束坐标变量名，如：image1]
+| 路径 | 说明 |
+|------|------|
+| `scripts/<脚本名>/index.txt` | 主脚本（一行一条指令，UTF-8） |
+| `scripts/<脚本名>/images/` | 截图模板，一般为 `.png`，脚本里可写全名或去掉后缀的名 |
+| `scripts/sort.txt` | 左侧脚本列表排序 |
+| `default_devices.txt` | 多开时的默认设备地址列表 |
 
-# 等待(等待时间会自动加入+-(0.1-0.9)的随机数)
-WAIT [等待时间，单位：秒]
+---
 
-# 日志
-LOG [日志内容]
-INFO [日志内容]
-WARN [日志内容]
-ERROR [日志内容]
+## 脚本怎么写
 
-# 赋值
-SET VAR [变量名] [数值]
-SET XY [变量名] [X数值] [Y数值]
+1. **一行一条命令**，词之间用空格分开（多个空格会当成一个）。
+2. **以 `#` 开头**的整行视为注释，不会执行。
+3. **`TAG 名称`**：定义标签行，供后面 `GO` / 条件跳转使用。
+4. **分辨率声明**：建议在脚本第一行写 `RES 1280 720`（当前全部脚本按 1280×720 编写）。运行时如果设备分辨率不同，虚拟机会把脚本里的坐标自动换算到设备分辨率后再点击/滑动。
+5. **图片名**：`images` 目录下的文件，如 `btn.png`；在脚本里可写 `btn.png` 或 `btn`。
 
-# 计算
-CALC XY [变量名] [x/y] [运算符] [变量名/数值] [保存到变量名]
-CALC VAR [变量名/数值] [运算符] [变量名/数值] [保存到变量名]
+---
 
-# 条件判断
-IF [变量名/数值] [条件判断符] [变量名/数值] [条件成立跳转标签] [条件不成立跳转标签]
+## 常用指令一览
 
+| 指令 | 含义（简述） |
+|------|----------------|
+| `TAG 标签名` | 声明跳转标签 |
+| `GO 标签名` | 跳到对应 `TAG` 所在行（执行流程上再前进一格，与虚拟机实现一致） |
+| `CLICK x y` | 点击屏幕坐标 |
+| `CLICK 变量名` | 点击已保存的坐标变量（如找图后存入的变量） |
+| `FIND_IMAGE 图文件名 变量名` | 当前画面找图；找到则把坐标写入变量，不跳转 |
+| `FIND_IMAGE 图文件名 变量名 THEN yes标签 no标签` | 找到跳 `yes`，否则跳 `no` |
+| `WAIT_IMAGE 图名 变量名` | 轮询找图，默认超时 5 秒；找到写入变量，不跳转 |
+| `WAIT_IMAGE 图名 变量名 TIME_OUT 秒` | 指定超时秒数；找到写入变量，不跳转 |
+| `WAIT_IMAGE 图名 变量名 THEN yes标签 no标签` | 找到跳 `yes`，否则跳 `no`（默认超时 5 秒） |
+| `WAIT_IMAGE 图名 变量名 THEN yes标签 no标签 TIME_OUT 秒` | 同时指定分支与超时 |
+| `HAS_IMAGE 图1 图2 ...` | 当前画面是否同时匹配多张图；不跳转 |
+| `HAS_IMAGE 图1 图2 ... THEN yes标签 no标签` | 匹配成功跳 `yes`，否则跳 `no` |
+| `WAIT 秒` | 等待 |
+| `BACK` / `HOME` | 系统返回键 / 桌面键 |
+| `SWIP` | 滑动（需配合变量里的起点终点坐标，见虚拟机内参数顺序） |
+| `RES w h` | 声明脚本坐标系分辨率；之后 `CLICK x y` 与 `SWIP`（脚本坐标变量）会自动按设备分辨率缩放 |
+| `SET name value` / `SET name x y` | 设置变量（自动识别单值或坐标）；兼容旧写法 `SET VAR ...` / `SET XY ...` |
+| `IF 条件` | 单行 IF（无 THEN）等价 `PASS`；也可作为块结构 IF 的起始行 |
+| `IF 条件 THEN yes标签 no标签` | 单行 IF：条件为 `a op b` 或布尔变量；根据结果跳转（标签可用 `PASS/CONT/BREAK/END`） |
+| `IF 条件` / `ELSE_IF 条件` / `ELSE` / `END_IF` | 块结构 IF：按分支执行代码块 |
+| `FOR` / `END_FOR` | 无任何参数时为**死循环**（用 `BREAK`、`GO` 跳出或跳转离开） |
+| `FOR 次数/条件` / `END_FOR` | 次数循环、条件循环 |
+| `FOR 变量名 RANGE a b` / `END_FOR` | 范围循环：每轮把变量名设为 `a..b`（可写 `FOR i RANGE 1 3`；也兼容旧写法 `FOR RANGE 1 3`） |
+| `CALC a op b c` | 计算 `a op b`（`op` 为 `+ - * /`）写入 `c`。标量例：`CALC count + 1 count`。只改坐标的 x 或 y：`CALC pos.x + 10 pos.x`。对标量同时加在 x、y 上：`CALC pos + 1 pos`。两坐标变量按分量运算：`CALC u + v w` |
+| `RANDOM` | 随机数写入变量 |
+| `LOG` / `INFO` / `WARN` / `ERROR` | 输出到运行日志 |
+| `START 包名` | 若进程不存在则尝试启动应用 |
+| `IMPORT 其他脚本目录名` | 同步执行 `scripts/<目录名>/index.txt` |
+| `PYTHON_RUN 模块名` | 运行当前脚本目录下 Python 子模块（`dir.模块名`，需实现 `start(vm)`） |
+| `BREAK` | 直接跳出最近一层 `FOR` 循环（也可在 yes/no 标签位置写 `BREAK`） |
+| `END` | 结束当前脚本 |
 
-FIND_IMAGE和IF跳转标签有两个保留字段 CONTINU 和 END
-CONTINU 表示继续执行后续指令
-END 表示结束脚本
-```
+> 分支里的标签名可使用：`PASS`（不跳转，顺序向下）、`CONT`（仅在 FOR 中使用，相当于 continue）、`BREAK`（跳出最近一层 FOR）、`END`（结束）等，与虚拟机 `get_tag` 行为一致。
 
-## 示例
-```
-HOME
-TAG START
-FIND_IMAGE image0.png image0 HAVE_IMAGE NOT_IMAGE
-TAG NEXT
-WAIT 3
-END
+---
 
-TAG HAVE_IMAGE
-CLICK image0
-GO NEXT
+## 调用栈（运行日志）
 
-TAG NOT_IMAGE
-BACK
-GO START
-```
+虚拟机在同一次运行里维护 **共享调用栈**（挂在运行窗口 `page` 上），进入/退出时会在日志里打出 `INFO [CALL +]` / `INFO [CALL -]`，并带当前深度 `depth`。
 
-## 构建
-```
-pip install -r requirements.txt
-python build.py
-```
+| 类型 | 说明 |
+|------|------|
+| `SCRIPT` | 某份 `index.txt` 开始 `run()` 时入栈，该脚本 `run` 结束（含 `END`、异常、杀进程等）时在 `finally` 里出栈 |
+| 嵌套 `IMPORT` | 子脚本也是一次 `Vm.run()`，会在当前帧之上再压一层 |
+| `PYTHON_RUN` | 执行 Python 子模块 `start(vm)` 期间额外压一层 `PY:模块名`，返回后弹出 |
+
+栈顶帧会不断更新 **`line`**（当前脚本行号），便于对照日志。代码中可通过 `vm.call_stack_snapshot()` 取当前栈的拷贝（字典列表，含 `script` / `dir` / `line` / `kind` 等字段）。
+
+---
+
+## 编辑窗口里的操作
+
+- **运行**：脚本编辑区会随时自动写入 `index.txt`（约停顿 300ms 后落盘，关闭窗口与运行前也会立即保存）。
+- **截图 / 图片列表**：截图保存到当前脚本的 `images/`，列表可预览、重命名、重新截图。
+- **教程**：点击 **「教程」** 按钮可打开本说明（与项目根目录 `README.md` 同步）。
+
+编辑器支持 **语法高亮** 与 **关键字/图片名补全**；补全弹出后可用 **方向键** 选择，**回车** 确认，**Esc** 关闭。
+
+---
+
+## 运行环境提示
+
+- 需本机已配置 **ADB**，设备可 `adb devices` 识别。
+- 脚本与资源路径相对于程序**当前工作目录**（一般在项目根目录运行 `main.py`）。
+
+更多细节以源码 `src/utils/vm.py` 中指令实现为准。

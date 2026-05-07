@@ -74,5 +74,9 @@ class ScriptRunner(Page):
         self.set_cmd_out_color()
 
     def closeEvent(self, event):
-        self.th.kill()
+        if self.th is not None:
+            try:
+                self.th.kill()
+            except Exception:
+                pass
         return super().closeEvent(event)
