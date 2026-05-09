@@ -68,20 +68,10 @@ class Vm(Thread):
         self._if_runtime_stack: list[dict] = []
         self._for_runtime_stack: list[dict] = []
         self._device_xy_vars: set[str] = set()
-        # 脚本坐标系默认 1280x720（也可用 RES 指令覆盖）
+        # 脚本坐标系默认与设备一致（也可用 RES 指令覆盖）
         self._script_res = (1280, 720)
         self._device_res = (1280, 720)
         self.__script_name__ = "__main__"
-
-        # 强制要求脚本第一行声明分辨率：RES w h
-        if not code or not str(code[0]).lstrip("\ufeff").strip().startswith("RES "):
-            # 尽量把错误写进运行日志里（若页面已初始化信号）
-            try:
-                self.page.cmd_out_list.append("ERROR 脚本第一行缺少分辨率声明：请添加 RES 1280 720")
-                self.page.update_cmd_out_signal.emit()
-            except Exception:
-                pass
-            raise Exception("脚本第一行缺少分辨率声明：请添加 RES 1280 720")
 
         self.control = Uiautomator2(address)
         err = self.control.connect()
@@ -98,6 +88,8 @@ class Vm(Thread):
                 self._device_res = (dw, dh)
         except Exception:
             pass
+        # 若脚本未显式声明 RES，则默认脚本分辨率与设备分辨率一致
+        self._script_res = self._device_res
         self.adb = Adb(address)
         self.address = address
         self.dir = dir

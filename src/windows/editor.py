@@ -701,7 +701,7 @@ class ScriptEditorWindow(Page):
 
     def on_changed_device(self, address):
         try:
-            sr = ScriptRunner(address, self.name)
+            sr = ScriptRunner(address, self.name, False)
             self.open_page(sr)
             sr.start()
         except Exception as e:

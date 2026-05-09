@@ -21,6 +21,7 @@ class ScriptRunner(Page):
     def __init__(self, address, name, after_run_close_script, *args, **kwargs):
         self.dir = f"scripts/{name}"
         self.address = address
+        self.th = None  # Vm 线程；start() 成功前或失败时可能不存在
         super().__init__(*args, **kwargs)
         self.setWindowTitle(f"运行 {address} {name}")  # 设置窗口标题
         self.resize(500, 600)  # 设置窗口大小
@@ -74,9 +75,10 @@ class ScriptRunner(Page):
         self.set_cmd_out_color()
 
     def closeEvent(self, event):
-        if self.th is not None:
+        th = getattr(self, "th", None)
+        if th is not None:
             try:
-                self.th.kill()
+                th.kill()
             except Exception:
                 pass
         return super().closeEvent(event)
